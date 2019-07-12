@@ -1,0 +1,216 @@
+---
+title: 'CSCI E-63C: Week 2 Problem Set'
+author: 'Erik Lee'
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(reshape2)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preface
+
+One of the first steps in the analysis of a new dataset, often as part of data cleaning, typically involves generation of high level summaries, such as: how many observations, attributes, which ones are predictors and which ones are (could be?) outcomes, what are their ranges, distributions, percentages of missing values, how strongly correlated are the predictors among themselves and with the outcome(s), etc.  It is usually at this stage when we develop our initial intuition about the level of difficulty of the problem and of the challenges presented by this particular dataset and therefore form our first set of ideas as to how to approach it.  There are many multivariate methods under unsupervised learning umbrella that are extremely useful in this setting (that will be introduced later in the course), but first things first, and here we will start by loading few datasets into R and exploring their attributes in the form of univariate summaries and bivariate plots and contingency tables (where applicable).
+
+For this problem set we will use several datasets available from [UCI machine learning repository](http://archive.ics.uci.edu/ml/datasets.html) that for convenience and as to not to depend on UCI ML repository availability have been also copied into this course website. Once you have downloaded them onto your computer, they can be loaded into R using function `read.table` with necessary options (of which most useful/relevant include: `sep` -- defining field separator and `header` -- instructing `read.table` to use fields in the first line as column headers). In principle, `read.table` can also use URL as a full path to the dataset, but here, to be able to work independently of network connection, we recommend that you download those datasets locally and provide `read.table` with appropriate paths to their local copies.  The simplest thing is probably to copy them to the same directory where your .Rmd file is, in which case just the file name passed to `read.table` should suffice.  As always, please remember, that `help(read.table)` (or, `?read.table` as a shorthand) will tell you quite a bit about this function and its parameters.
+
+For those datasets that do not have column names included in their data files, it is often convenient to assign them explicitly. Please note that for some of these datasets categorical variables are encoded in the form of integer values, that by default R will interpret as continuous variables while the behavior of many R functions depends on the type of the input variables.
+
+The code excerpts and their output presented below illustrate some of these most basic steps as applied to one of the datasets available from UCI. The homework problems follow after that -- they will require you to apply similar kind of approaches to generate high levels summaries of few other UCI datasets.
+
+```{r habRead}
+habDat <- read.table("haberman.data",sep=",")
+colnames(habDat) <- c("age","year","nodes","surv")
+summary(habDat$surv)
+habDat$surv <- c("yes","no")[habDat$surv]
+summary(habDat$surv)
+habDat$surv <- factor(habDat$surv)
+summary(habDat$surv)
+```
+
+The following two examples below show generation of xy-scatterplots of age and node count for the patients in this dataset with color indicating their survival past 5 years using basic plotting capabilities in R as well as those provided by the package `ggplot2`.
+
+```{r habPlot,fig.height=5,fig.width=10}
+oldPar <- par(mfrow=c(1:2),ps=16)
+for ( iSurv in sort(unique(habDat$surv)) ) {
+    plot(habDat[,c("age","nodes")],type="n",
+        main=paste("Survival:",iSurv))
+    iTmp <- (1:length(levels(habDat$surv)))[levels(habDat$surv)==iSurv]
+    points(habDat[habDat$surv==iSurv,c("age","nodes")],col=iTmp,pch=iTmp)
+}
+par(oldPar)
+```
+
+```{r habPlotGG,fig.height=3,fig.width=6}
+ggplot(habDat,aes(x=age,y=nodes,colour=surv,shape=surv)) + 
+geom_point() + facet_wrap(~surv)
+```
+
+It seems that higher number of nodes might be associated with lower probability of survival. One attempt to quantify this relationship might involve testing relationship between indicators of survival and count of nodes exceeding arbitrarily chosen cutoffs (zero or 75th percentile in the example below). There is also substantial degree of overplotting due to integer values of node count and year that might, for instance, make it less apparent that not all patients with zero nodes survive if all of them were plotted in the same panel.  
+
+```{r habTbl}
+habDat$nodes0 <- habDat$nodes==0
+table(habDat[, c("surv","nodes0")])
+habDat$nodes75 <- habDat$nodes>=quantile(habDat$nodes,probs=0.75)
+table(habDat[, c("surv","nodes75")])
+```
+
+Please feel free to model your solutions after the examples shown above, while exercising necessary judgement as to which attributes are best represented as continuous and which ones -- as categorical, etc.  The descriptions of homework problems provide some guidance as to what is expected, but leave some of those choices up to you. Making such calls is an integral part of any data analysis project and we will be working on advancing this skill throughout
+this course.
+
+**Lastly -- do ask questions!  Piazza is the best for that**
+
+# Banknote authentication (30 points)
+
+This dataset presents an example of classification problem (authentic vs. counterfeit bank notes) using continuous predictors derived from image processing. More details about underlying data can be found in corresponding [dataset description](http://archive.ics.uci.edu/ml/datasets/banknote+authentication) at UCI ML website. To load data into R please use data file `data_banknote_authentication.txt` available at the course website as well as in UCI ML dataset repository.
+
+```{r, eval=TRUE}
+# load data set
+bankNoteData = read.table("data_banknote_authentication.txt", sep=",", header=FALSE)
+```
+
+Once the dataset in loaded into R, please name appropriately data set attributes, determine number of variables (explain which ones are predictors and which one is the outcome) and observations in the dataset (R functions such as `dim`, `nrow`, `ncol` could be useful for this), generate summary of the data using `summary` function in R and generate pairwise XY-scatterplots of each pair of continuous predictors indicating outcome using colour and/or shape of the symbols (you may find it convenient to use `pairs` plotting function). Describe your observations and discuss which of the variables are more likely to be informative with respect to discriminating forged bank notes from genuine.
+
+```{r, eval=TRUE}
+# set column names, based off of the Attribute Information from UCI Matchine Learning website
+attributeNames = c("Variance", "Skweness", "Curtosis", "Entropy", "Class") # these are attributes of the Wavelet Transformed image
+colnames(bankNoteData) = attributeNames
+
+# observations in the data set
+print("Number of Rows/Observations")
+print(nrow(bankNoteData)) # rows
+
+print("Number of Columns/Attributes")
+print(ncol(bankNoteData)) # columns
+
+# summaries for each attribute
+print("Summary of the Bank Note Dataset")
+summary(bankNoteData)
+
+# correlation matrix for the attributes
+print("Correlation Matrix for Bank Note Data")
+cor(bankNoteData)
+
+```
+
+Here is a summary of the attributes given by the data set information on the UCI website:
+1. Variance - predictor, continuous, variance of Wavelet Transformed image
+2. Skweness - predictor, continuous skewness of Wavelet Transformed imag
+3. Curtosis - predictor, continuous, curtosis of Wavelet Transformed image
+4. Entropy - predictor, continuous, entropy of image
+5. Class - outcome, integer, measures fake (0) or geniune (1)
+
+
+```{r, eval=TRUE}
+# pairs plot of the data
+cols = c("Red", "Blue")
+pairs(bankNoteData[,1:4], pch=0, cex=0.5, col=cols[bankNoteData$Class+1])
+```
+
+Based on the summary and observations of the data and the skatterplot above, the order of most informative to least informative variable for determining bank notes as geniune or fake is Variance, Skweness, Curtosis, and Entropy. Using the cor() function and looking at the "Class" row, we can order the correlation of the continous variables from strongest to weakest correlation: Variance (-0.72), Skewness (-0.44), Curtosis (0.15), and Entropy (-0.02). Variance and Skweness are negatively correlated with Class, highlighting a negative relationship.
+
+The graph shows the XY-scatterplots of each continous variable with another. Red points/clusters represent a Class=0 (possibly fake bank notes) and blue points/clusters represent Class=1 (possibly genuine bank notes). The goal of the plot is to find which variables best discriminate between genuine and fake bank notes. We can see this by looking at the overlap between the Red and Blue clusters. Less overlap indicates a better predicatbility of the Class. This is the case since less overlap allows the varialbes being analyzed to discern genuine versus fake bank notes better. 
+
+If we look accross each row of the paired scatterplot, we can see the relationship/overlap of each continous variable with the others. Variance seems to have the least overlap with the Skewness, Curtosis, and Entropy graphs. More specifically, of all the plots shown, Varance and Skweness graph have little to no overlap between the Red (not genuine) and Blue (genuine) bank note clusters. This fits in line with the correlation matrix before, where we found that Variance and Skweness have better correlations with Class out of all the variables.
+
+
+
+Please comment on whether given the data at hand such problem appears to be an easy or hard one to solve.  Try to guess using your best intuition, what could be an error in discriminating forged banknotes from genuine  in this dataset: 50%, 20%, 10%, 5%, 2%, less than that?  Later in the course we will work with this dataset again to actually develop such a classifier at which point you will get quantitative answer to this question, but for now, just from visual inspection of the scatterplots above, what do you think such an error could be?  There is no wrong answer at this point, just try your best and make a note of it, so you can go back to it several weeks later.  Also, please discuss some of the tradeoffs that might be associated with that. For instance, should one expect the cost of calling genuine note counterfeit to be the same as making the opposite call (allowing fake bills as authentic).  Consider also anticipated frequency of these cases in the practical settings and how it could potentially interact with these costs.
+
+Based on the data at hand, this problems seems easy to solve since there are four variables.  The erorr of the model could be between 10% to 20%. If we were to use all four continuous variables to predict the outcome, the error could likely be closer to 20% because Entropy has shown, based on the correlation with Class and the paired XY-scatterplots, to be a realitvely poor predictor in comparison to the other variables. There are six unique graphs in the paired XY-scatter plots, and one graph in particular, the Curtosis and Entropy graph, has lots of overlap. If we based the error off of bad predictor variables we have 1 out of 4 (25%) variables being poor predictors and 1 out of 6 (16.66%) graphs with lots of overlap. This could estimate an error of 10-20%. Maybe removing Entropy for the model could provide lower error and better predictions.
+
+We should also consider false-positive (fake notes counted as real, 1 when actually 0) and false-negative (real notes counted as fake, 0 when actually 1) into the error. They have the same affect of lowering the frequency of correct predictions of Class. However, they have different implications if a model was used in a test or real-life scenario for a bank. Counting fake bank notes as real is worse than counting real bank notes as fake. In the former option, the bank loses money it lends/saves for customers and credibility. In the latter option, a customer is not able to access their funds. A bank can easily reconcile problems with accessing customer accounts, but it can not afford to have money stolen with fraudlent notes. Both these issues will increase the error and weaken a prediction model, and must be minimized.  
+
+
+# Abalone age (30 points)
+
+This dataset presents an example of a regression problem -- predicting mollusc age from measurements that are easier to obtain. More details about underlying data can be found in corresponding [dataset description](http://archive.ics.uci.edu/ml/datasets/Abalone). To load data into R please use file `abalone.data` available at the course website as well as at the UCI ML data repository.
+
+```{r, eval=TRUE}
+abaoloneData = read.table("abalone.data", sep=",")
+```
+
+
+Once the dataset in loaded into R, please name appropriately data set attributes, determine number of variables (explain which ones are predictors -- categorical vs. continuous -- and which one is the outcome) and observations in the dataset (R functions such as `dim`, `nrow`, `ncol` could be useful for this), generate summary of the data using `summary` function in R and generate pairwise XY-scatterplots of each pair of *continuous* attributes.
+
+```{r, eval=TRUE}
+# attribute names
+attributeNames = c("Sex", "Length", "Diameter", "Height", "Whole Weight", "Shucked Weight", "Viscera Weight", "Shell Weight", "Rings")
+
+# set the column names
+colnames(abaoloneData) = attributeNames
+
+# number of columns/attributes
+print("Number of Columns/Attributes")
+ncol(abaoloneData)
+
+# number of rows/observations
+print("Number of Rows/Observations")
+nrow(abaoloneData)
+
+# data summary
+print("Summary of the Abaolone Data")
+summary(abaoloneData)
+
+# correlation between all attributes
+print("Correlation Matrix for Numberic Abaolone Data Attributes")
+cor(abaoloneData[,2:9])
+
+```
+
+Here is a summary of each attribute according to the data and data set info:
+
+1. Sex - predictor, categorical, M (male), F (female), or I (infant)
+2. Length - predictor, continuous, longest shell measrument in millimeters (mm)
+3. Diameter - predictor, continuous, perpendicular to length in millimeters (mm)
+4. Height - predictor, continuous, height with meat in the shell in millimeters (mm)
+5. Whole Weight - predictor, continuous, whole abaolone in grams (g)
+6. Shucked Weight - predictor, continuous, weight of meat in grams (g)
+7. Viscera Weight - predictor, continuous, gut weight after bleeding in grams (g)
+8. Shell Weight - predictor, continuous, shell weight after being dried in grams (g)
+9. Rings - outcome, integer, rings+1.5 gives the age in years
+
+```{r}
+# XY-scatterplot of data
+pairs(abaoloneData[, 2:8], pch=0, cex=0.5) # excludes col 1 (Sex, categorical) and 9 (Rings, integers)
+```
+
+
+Describe your observations and discuss which attributes might be more useful for predicting snail age.
+
+There a few interesting observations to note from the correlation matrix of the attributes. The continuous predictors (Length, Diameter, Height, Whole, Shucked, Viscera, Shell) have high correlations with each other (approximately 0.8-0.90 range). This could reveal some multicollinearlity between some of the predictors. Additionally, these predictors are all  positively correlated with the outcome, Rings. The highest four predictor correlations with Rings are Shell Weight (0.62), Diameter (0.57), Height (0.557), and Length (0.556). Although these correlations do have a moderate values, they may be better predictors in a regression model predicting snail age.
+
+Examining the XY-scatterplot for the continous predictors, there are a few key features that may indicate the strengths and weakness of each predictor. If we look at the Length and Diameter plot, we see that both have a strong positive linear relationship, indicating possible multicollinearity. In fact, the graphs accross the Length and Diameter rows are almost identical in shape. Length and Diameter have a a curved (maybe logarithmic) function when graphed with the Weights (While, Shucked, Viscera, Shell). If we look at how each weight is plotted with another, we see that all four weight measurments have a moderately strong, positive relationship with each other, again indicating possible multicollinearity. Height seems to have a weak or non-existant relationship with the other predictors; height does not change with the other predictors. 
+
+Based on these observations of the XY-scatterplots, when building a regression model to predict age of the snail, it may be useful to include either length or diameter, one or more types of weights, and height to get accurate predictions. It seems as though some variables are related and so it may not be absolutely necessary to include every predictor so as to allow the model to be flexible. Based on the plots and correlation matrix, Shell Weight, Diameter, and Height may be better predictors to rely on for a regression model.
+
+For **extra 5 points** for some of the continuous and
+categorical predictors generate boxplots rendering relationship between them.
+
+```{r, eval=TRUE}
+boxplot(list(abaoloneData$Sex, abaoloneData$Length, abaoloneData$Diameter, abaoloneData$Height), names=c("Sex", "Length", "Diameter", "Height"), col=c("red", "blue", "green", "yellow"))
+
+boxplot(list(abaoloneData$`Whole Weight`, abaoloneData$`Shucked Weight`, abaoloneData$`Viscera Weight`, abaoloneData$`Shell Weight`), names=c("Whole Weight", "Shucked Weight", "Viscera Weight", "Shell Weight"), col=c("purple", "orange", "gold", "grey"))
+```
+
+
+# Tibbles (extra 5 points)
+
+Fluency in R (as any other programming language) involves ability to look up, understand and put to use as necessary functionality that has not been explored before.  One of relatively recent additions to R are so-called tibbles that can be seen as ["modern take on data frames"](https://cran.r-project.org/web/packages/tibble/vignettes/tibble.html).  To earn extra points for this week problem set, please look up tibble use and constrast their behavior to that of conventional data frame using one of the datasets you have already created above.  To earn all points available your solution must include more than one example of substantive difference (i.e. same kind of difference illustrated by two datasets counts as one).  Please also comment on why use of tibbles may result in more robust code.
+
+```{r, eval=TRUE}
+library(tibble)
+options(tibble.width = Inf)
+as_tibble(abaoloneData)
+
+```
+
+One key difference between tibbles and data frames is how they are printed. By default, a tibble will print the first ten rows and all the columns that fit. They also provide the data type for each column, number of rows, and number of columns by default. A data frame does not show any of these default options when printed; functions like class(), mode(), dim(), nrow(), ncol() must be used to obtain this information. The print() function can print a data frame and shows the max.print number of rows. A data frame can be subsetted to print ten (or any number of) rows like a tibble with print(df[1:10,]), where df is a data frame variable.
+
+Another key difference between tibbles and data frames is that tibbles will always return another tibble. By contrast, a data frame will return either a data frame or vector, depending on how it is subsetted. For a single column, a tibble will return a tibble and a data frame will return a vector. This can cause problems for the code if it is requesting a data frame from a subset, but is returned a vector. A tibble will avoid this by returning a tibble and keeping the data type consistent and the code robust. 
+
+A third key difference is recycling of values. Tibbles only allow recycling for values of length one. Data frames can bypass this by recycling atomic vecotrs or I() wrapped vectors a whole number of times. This helps tibbles avoid errors recycling vectors that do not match the number of rows. Additionally, tibbles allow for the creating of a zero row tibble, which can be helpful for code that requires the use of an "empty" zero row tibble. For instance, if the data in the tibble was removed, the tibble can still be referenced and used for future operations. 

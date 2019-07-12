@@ -1,0 +1,473 @@
+---
+title: 'CSCI E-63C: Week 5 Problem Set'
+author: 'Erik Lee'
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+library(ISLR)
+library(leaps)
+library(ggplot2)
+library(glmnet)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preface
+
+For this week problem set we will apply some of the approaches presented in ISLR for variable selection and model regularization to some of those datasets that we have worked with previously.  The goal will be to see whether some of the more principled methods for model selection will allow us better understand relative variable importance, variability of predictive performance of the models, etc.
+
+For the purposes of the preface we will use abalone dataset to illustrate some of the concepts and approaches here.  The problems in the set will use computer hardware dataset from the previous week problem set  The flow below follows closely the outline of the Labs 6.5 and 6.6 in ISLR and you are encouraged to refer to them for additional examples and details.
+
+
+```{r abaloneDataInput,echo=FALSE}
+abaDat <- read.table("abalone.data",sep=",")
+colnames(abaDat) <- c("sex","len","diam","h","ww","sw","vw","sh","rings")
+abaDat$age <- abaDat$rings+1.5
+###dim(abaDat)
+lnAbaDat <- abaDat
+lnAbaDat <- lnAbaDat[lnAbaDat$h>0&lnAbaDat$h<=0.25,]
+lnAbaDat[,-1] <- log(lnAbaDat[,-1])
+lnAbaDat <- lnAbaDat[,colnames(lnAbaDat)!="rings"]
+```
+
+## Selecting the best variable subset on the entire dataset
+
+Assuming that we have read and pre-processed abalone data (converted rings to age, log-transformed, removed height outliers -- two zeroes and two largest values), let's use `regsubsets` from library `leaps` to select optimal models with number of terms ranging from one to all variables in the dataset using each of the methods available for this function and collect corresponding model metrics (please notice that we override default value of `nvmax` argument and reflect on as to why we do that):
+
+```{r regsubsetsAbalone}
+summaryMetrics <- NULL
+whichAll <- list()
+for ( myMthd in c("exhaustive", "backward", "forward", "seqrep") ) {
+  rsRes <- regsubsets(age~.,lnAbaDat,method=myMthd,nvmax=9)
+  summRes <- summary(rsRes)
+  whichAll[[myMthd]] <- summRes$which
+  for ( metricName in c("rsq","rss","adjr2","cp","bic") ) {
+    summaryMetrics <- rbind(summaryMetrics,
+      data.frame(method=myMthd,metric=metricName,
+                nvars=1:length(summRes[[metricName]]),
+                value=summRes[[metricName]]))
+  }
+}
+ggplot(summaryMetrics,aes(x=nvars,y=value,shape=method,colour=method)) + geom_path() + geom_point() + facet_wrap(~metric,scales="free") +   theme(legend.position="top")
+```
+
+We can see that, except for sequential replacement that has chosen quite a model as the best with four variables, all others came with models of very comparable performance by every associated metric. Plotting variable membership for each of those models as captured by `which` attribute of the `summary` further illustrates that the variables chosen by sequential replacement for four variable model were sex and highly correlated length and diameter explaining its poor performance (but not its choice by this algorithm):
+
+```{r abaloneWhich}
+old.par <- par(mfrow=c(2,2),ps=16,mar=c(5,7,2,1))
+for ( myMthd in names(whichAll) ) {
+  image(1:nrow(whichAll[[myMthd]]),
+        1:ncol(whichAll[[myMthd]]),
+        whichAll[[myMthd]],xlab="N(vars)",ylab="",
+        xaxt="n",yaxt="n",breaks=c(-0.5,0.5,1.5),
+        col=c("white","gray"),main=myMthd)
+  axis(1,1:nrow(whichAll[[myMthd]]),rownames(whichAll[[myMthd]]))
+  axis(2,1:ncol(whichAll[[myMthd]]),colnames(whichAll[[myMthd]]),las=2)
+}
+par(old.par)
+```
+
+## Using training and test data to select the best subset
+
+Next, following Lab 6.5.3 in ISLR we will split our data approximately evenly into training and test, select the best subset of variables on training data, evaluate its performance on training and test and record which variables have been selected each time.  First, to be able to use `regsubsets` output to make predictions we follow ISLR and setup `predict` function that can be applied to the output from `regsubsets` (notice `.regsubsets` in its name -- this is how under S3 OOP framework in R methods are matched to corresponding classes -- we will further down call it just by passing output from `regsubsets` to `predict` -- this, in its turn, works because *function* `regsubsets` returns object of *class* `regsubsets`):
+
+```{r predictRegsubsets}
+predict.regsubsets <- function (object, newdata, id, ...){
+  form=as.formula(object$call [[2]])
+  mat=model.matrix(form,newdata)
+  coefi=coef(object,id=id)
+  xvars=names (coefi)
+  mat[,xvars] %*% coefi
+}
+```
+
+We are all set now to repeatedly draw training sets, choose the best set of variables on them by each of the four different methods available in `regsubsets`, calculate test error on the remaining samples, etc.  To summarize variable selection over multiple splits of the data into training and test, we will use 3-dimensional array `whichSum` -- third dimension corresponding to the four methods available in `regsubsets`.  To split data into training and test we will use again `sample` function -- those who are curious and are paying attention may want to reflect on the difference in how it is done below and how it is implemented in the Ch. 6.5.3 of ISLR and what are the consequences of that. (Hint: consider how size of training or test datasets will vary from one iteration to another in these two implementations)
+
+```{r abaloneRegsubsetsTrainTest}
+dfTmp <- NULL
+whichSum <- array(0,dim=c(9,10,4),
+  dimnames=list(NULL,colnames(model.matrix(age~.,lnAbaDat)),
+      c("exhaustive", "backward", "forward", "seqrep")))
+# Split data into training and test 30 times:
+nTries <- 30
+for ( iTry in 1:nTries ) {
+  bTrain <- sample(rep(c(TRUE,FALSE),length.out=nrow(lnAbaDat)))
+  # Try each method available in regsubsets
+  # to select the best model of each size:
+  for ( jSelect in c("exhaustive", "backward", "forward", "seqrep") ) {
+    rsTrain <- regsubsets(age~.,lnAbaDat[bTrain,],nvmax=9,method=jSelect)
+    # Add up variable selections:
+    whichSum[,,jSelect] <- whichSum[,,jSelect] + summary(rsTrain)$which
+    # Calculate test error for each set of variables
+    # using predict.regsubsets implemented above:
+    for ( kVarSet in 1:9 ) {
+      # make predictions:
+      testPred <- predict(rsTrain,lnAbaDat[!bTrain,],id=kVarSet)
+      # calculate MSE:
+      mseTest <- mean((testPred-lnAbaDat[!bTrain,"age"])^2)
+      # add to data.frame for future plotting:
+      dfTmp <- rbind(dfTmp,data.frame(sim=iTry,sel=jSelect,vars=kVarSet,
+      mse=c(mseTest,summary(rsTrain)$rss[kVarSet]/sum(bTrain)),trainTest=c("test","train")))
+    }
+  }
+}
+# plot MSEs by training/test, number of 
+# variables and selection method:
+ggplot(dfTmp,aes(x=factor(vars),y=mse,colour=sel)) + geom_boxplot()+facet_wrap(~trainTest)
+```
+
+We can see that:
+
+* sequential replacement has difficult time selecting optimal subsets of variables on some of the splits into training and test
+* the other three methods yield models of very comparable performance
+* addition of the second variable to the model clearly improves test error by much more than its variability across different selections of training sets
+* by similar logic model with three variables could also be justified
+* the difference in error among models with four variables or more is comparable to their variability across different selections of training data and, therefore, probably not particularly meaningful
+* training error is slightly lower than the test one (the number of observations in abalone dataset is couple of orders of magnitude larger than the number of variables used in these models)
+
+This is further supported by plotting average fraction of each variable inclusion in the best model of every size by each of the four methods (darker shades of gray indicate closer to unity fraction of times given variable has been included in the best subset):
+
+```{r whichTrainTestAbalone}
+old.par <- par(mfrow=c(2,2),ps=16,mar=c(5,7,2,1))
+for ( myMthd in dimnames(whichSum)[[3]] ) {
+  tmpWhich <- whichSum[,,myMthd] / nTries
+  image(1:nrow(tmpWhich),1:ncol(tmpWhich),tmpWhich,
+        xlab="N(vars)",ylab="",xaxt="n",yaxt="n",main=myMthd,
+        breaks=c(-0.1,0.1,0.25,0.5,0.75,0.9,1.1),
+        col=c("white","gray90","gray75","gray50","gray25","gray10"))
+  axis(1,1:nrow(tmpWhich),rownames(tmpWhich))
+  axis(2,1:ncol(tmpWhich),colnames(tmpWhich),las=2)
+}
+par(old.par)
+```
+
+From the best subset of about four or more variable inclusion starts to vary more among different selection of training and test sets.
+
+Similar observations can be made using cross-validation rather than the split of the dataset into training and test that is omitted here for the purposes of brevity.
+
+## Ridge for variable selection:
+
+As explained in the lecture and ISLR Ch.6.6 lasso and ridge regression can be performed by `glmnet` function from library `glmnet` -- its argument `alpha` governs the form of the shrinkage penalty, so that `alpha=0` corresponds to ridge and `alpha=1` -- to lasso regression.  The arguments to `glmnet` differ from those used for `lm` for example and require specification of the matrix of predictors and outcome separately.  `model.matrix` is particularly helpful for specifying matrix of predictors by creating dummy variables for categorical predictors:
+
+```{r ridgeAbalone}
+# -1 to get rid of intercept that glmnet knows to include:
+x <- model.matrix(age~.,lnAbaDat)[,-1]
+head(lnAbaDat)
+# notice how it created two columns for sex (first level is for intercept):
+head(x)
+y <- lnAbaDat[,"age"]
+ridgeRes <- glmnet(x,y,alpha=0)
+plot(ridgeRes)
+```
+
+Plotting output of `glmnet` illustrates change in the contributions of each of the predictors as amount of shrinkage changes.  In ridge regression each predictor contributes more or less over the entire range of shrinkage levels.
+
+Output of `cv.glmnet` shows averages and variabilities of MSE in cross-validation across different levels of regularization.  `lambda.min` field indicates values of $\lambda$ at which the lowest average MSE has been achieved, `lambda.1se` shows larger $\lambda$ (more regularization) that has MSE 1SD (of cross-validation) higher than the minimum -- this is an often recommended $\lambda$ to use under the idea that it will be less susceptible to overfit. You may find it instructive to experiment by providing different levels of lambda other than those used by default to understand sensitivity of `gv.glmnet` output to them.  `predict` depending on the value of `type` argument allows to access model predictions, coefficients, etc. at a given level of lambda:
+
+```{r cvRidgeAbalone}
+cvRidgeRes <- cv.glmnet(x,y,alpha=0)
+plot(cvRidgeRes)
+cvRidgeRes$lambda.min
+cvRidgeRes$lambda.1se
+predict(ridgeRes,type="coefficients",s=cvRidgeRes$lambda.min)
+predict(ridgeRes,type="coefficients",s=cvRidgeRes$lambda.1se)
+# and with lambda's other than default:
+cvRidgeRes <- cv.glmnet(x,y,alpha=0,lambda=10^((-80:80)/20))
+plot(cvRidgeRes)
+```
+
+Relatively higher contributions of shell weight, shucked weight and height to the model outcomed are more apparent for the results of ridge regression performed on centered and, more importantly, scaled matrix of predictors:
+
+```{r scaledRidgeAbalone}
+ridgeResScaled <- glmnet(scale(x),y,alpha=0)
+cvRidgeResScaled <- cv.glmnet(scale(x),y,alpha=0)
+predict(ridgeResScaled,type="coefficients",s=cvRidgeResScaled$lambda.1se)
+```
+
+Notice that the top two variables most commonly selected by regsubsets and those with two largest (by absolute value) coefficients are the same -- shell and shucked weights.
+
+## Lasso for variable selection
+
+Lasso regression is done by the same call to `glmnet` except that now `alpha=1`.  One can see now how more coefficients become zeroes with increasing amount of shrinkage.  Notice that amount of regularization increases from right to left when plotting output of `glmnet` and from left to right when plotting output of `cv.glmnet`.
+
+```{r lassoAbalone}
+lassoRes <- glmnet(x,y,alpha=1)
+plot(lassoRes)
+cvLassoRes <- cv.glmnet(x,y,alpha=1)
+plot(cvLassoRes)
+# With other than default levels of lambda:
+cvLassoRes <- cv.glmnet(x,y,alpha=1,lambda=10^((-120:0)/20))
+plot(cvLassoRes)
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.1se)
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.min)
+```
+
+As explained above and illustrated in the plots for the output of `cv.glmnet` `lambda.1se` typically corresponds to more shrinkage with more coefficients set to zero by lasso. Use of scaled predictors matrix  makes for more apparent contributions of shell and shucked weights:
+
+```{r scaledLassoAbalone}
+lassoResScaled <- glmnet(scale(x),y,alpha=1)
+cvLassoResScaled <- cv.glmnet(scale(x),y,alpha=1)
+predict(lassoResScaled,type="coefficients",s=cvLassoResScaled$lambda.1se)
+```
+
+### Lasso on train/test datasets:
+
+Lastly, we can run lasso on several training datasets and calculate corresponding test MSE and frequency of inclusion of each of the coefficients in the model:
+
+```{r lassoAbaloneTrainTest}
+lassoCoefCnt <- 0
+lassoMSE <- NULL
+for ( iTry in 1:30 ) {
+  bTrain <- sample(rep(c(TRUE,FALSE),length.out=nrow(x)))
+  cvLassoTrain <- cv.glmnet(x[bTrain,],y[bTrain],alpha=1,lambda=10^((-120:0)/20))
+  lassoTrain <- glmnet(x[bTrain,],y[bTrain],alpha=1,lambda=10^((-120:0)/20))
+  lassoTrainCoef <- predict(lassoTrain,type="coefficients",s=cvLassoTrain$lambda.1se)
+  lassoCoefCnt <- lassoCoefCnt + (lassoTrainCoef[-1,1]!=0)
+  lassoTestPred <- predict(lassoTrain,newx=x[!bTrain,],s=cvLassoTrain$lambda.1se)
+  lassoMSE <- c(lassoMSE,mean((lassoTestPred-y[!bTrain])^2))
+}
+mean(lassoMSE)
+lassoCoefCnt
+```
+
+One can conclude that typical lasso model includes about four coefficients and (by comparison with some of the plots above) that its test MSE is about what was observed for three to four variable model as chosen by the best subset selection approach.
+
+# Problem 1: the best subset selection (15 points)
+
+Using computer hardware dataset from week 4 problem set (properly preprocessed: shifted/log-transformed, ERP and model/vendor names excluded) select the best subsets of variables for predicting PRP by some of the methods available in `regsubsets`.  Plot corresponding model metrics (rsq, rss, etc.) and discuss results presented in these plots (e.g. what number of variables appear to be optimal by different metrics) and which variables are included in models of which sizes (e.g. are there variables that are included more often than others?).
+
+*Please feel free for this and the following problems adapt the code used above as necessary for the task at hand.*
+
+```{r, eval=TRUE}
+# load week 4 HW data
+cpuData = read.table("cpuDataSingleVar.dat", sep=",")
+
+# use each method of regsumbsts
+mtds = c("exhaustive", "forward", "backward", "seqrep")
+metrics = c("rsq","rss","adjr2","cp","bic")
+wchAll = list()
+sumMet = NULL
+
+for(mthd in mtds){
+  rgSub = regsubsets(cpuData$PRP~., cpuData, method=mthd, nvmax=6)
+  summ = summary(rgSub)
+  wchAll[[mthd]] = summ$which
+  for(met in metrics){
+    sumMet = rbind(sumMet, data.frame(method=mthd, metric=met, nvars=1:length(summ[[met]]), value=summ[[met]]))
+  }
+}
+
+# using ggplot from above
+ggplot(sumMet,aes(x=nvars,y=value,shape=method,colour=method)) + geom_path() + geom_point() + facet_wrap(~metric,scales="free") +   theme(legend.position="top")
+
+```
+
+```{r, eval=TRUE}
+old.par <- par(mfrow=c(2,2),ps=16,mar=c(5,7,2,1))
+for ( methd in names(wchAll) ) {
+  image(1:nrow(wchAll[[methd]]),
+        1:ncol(wchAll[[methd]]),
+        wchAll[[myMthd]],xlab="N(vars)",ylab="",
+        xaxt="n",yaxt="n",breaks=c(-0.5,0.5,1.5),
+        col=c("white","gray"),main=methd)
+  axis(1,1:nrow(wchAll[[methd]]),rownames(wchAll[[methd]]))
+  axis(2,1:ncol(wchAll[[methd]]),colnames(wchAll[[methd]]),las=2)
+}
+par(old.par)
+```
+
+Based on the first plot, the model metrics (R-sq, RSS, adj. R-sq, Cp, BIC) indicate that four variables are optimal for creating a model. This is shown in three of the four methods used in regsubsets (exhaustive, forward, backward), with the exception of sequential replacement which exluded four but favored three or five variables. 
+
+The second plot shows the similar choice in variables across each subset method. All four methods chose MMAX to be included in all the models of varying sizes (one or more variables). The CACH variable had the next most frequent appearances in models with two or more variables. All four methods show that a four variable models should include MMAX, MMIN, CACH, and MYCT. 
+
+# Problem 2: the best subset on training/test data (15 points)
+
+Splitting computer hardware dataset into training and test as shown above, please calculate and plot training and test errors (MSE) for each model size for several of the methods available for `regsubsets`.  Using `which` field investigate stability of variable selection at each model size across multiple selections of training/test data.  Discuss these results -- e.g. what model size appears to be the most useful by this approach, what is the error rate corresponing to it, how stable is this conclusion across multiple methods for the best subset selection, how does this error compare to that of ERP (PRP estimate by dataset authors)?
+
+For *extra five points* do the same using cross-validation or bootstrap
+
+
+```{r, eval=TRUE}
+# adapted from the code above to fit the cpuData
+
+set.seed(4)
+
+dfTemp2 <- NULL
+whichSum <- array(0,dim=c(6,7,4),
+  dimnames=list(NULL,colnames(model.matrix(PRP~., cpuData)),
+      c("exhaustive", "backward", "forward", "seqrep")))
+
+nTries <- 30
+for ( iTry in 1:nTries ) {
+  bTrain <- sample(rep(c(TRUE,FALSE),length.out=nrow(cpuData)))
+  for ( jSelect in c("exhaustive", "backward", "forward", "seqrep") ) {
+    rsTrain <- regsubsets(PRP~.,cpuData[bTrain,],nvmax=6,method=jSelect)
+    whichSum[,,jSelect] <- whichSum[,,jSelect] + summary(rsTrain)$which
+    for ( kVarSet in 1:6 ) {
+      # make predictions:
+      testPred <- predict(rsTrain,cpuData[!bTrain,],id=kVarSet)
+      # calculate MSE:
+      mseTest <- mean((testPred-cpuData[!bTrain,"PRP"])^2)
+      # add to data.frame for future plotting:
+      dfTemp2 <- rbind(dfTemp2,data.frame(sim=iTry,sel=jSelect,vars=kVarSet,
+      mse=c(mseTest,summary(rsTrain)$rss[kVarSet]/sum(bTrain)),trainTest=c("test","train")))
+    }
+  }
+}
+# plot MSEs by training/test, number of 
+# variables and selection method:
+ggplot(dfTemp2,aes(x=factor(vars),y=mse,colour=sel)) + geom_boxplot()+facet_wrap(~trainTest)
+```
+
+The MSE for the cpuData is minimized at four variables for the training and test data sets. The median MSE for four variable models is shown to be lower for the training data compared to the test data, since each model was fit with the training data. The MSE is also stable across exhasutive, backward, and forward subset methods all showing similar boxplots, with an exception of a slight jump in median MSE for seqrep. And, the MSE for five and six variables have neglegible decreases compared to four. 
+
+Compared to the ERP, the calculated MSE for PRP is lower. In homework 4, the MSE for ERP on a four variable model was approximately 0.3. The authors overestimated most points as ERP has a mean of 1238 and PRP has a mean of 1150. Because their estimations were higher on average than the published results, their predictions, if fitted to models and tested on another data set, would produce higher error due to the added unexplained error (from their measuments or formulas or methods for estimating PR) in the model. The subset selection shows that the MSE for PRP at four variables is at 0.21, lower than the MSE for ERP.
+
+```{r}
+# Cross-Validation
+set.seed(3)
+tempDF = NULL
+kFolds = 8 
+folds = sample(1:kFolds, nrow(cpuData), replace=TRUE)
+cv.errors = matrix(NA, kFolds, 6, dimnames=list(NULL, paste(1:6)))
+for(k in 1:kFolds){
+  for ( jSelect in c("exhaustive", "backward", "forward", "seqrep") ){
+    regSubs = regsubsets(PRP~., cpuData[folds!=k,], nvmax=6, method=jSelect)
+    for(i in 1:6){
+      pred=predict(regSubs, cpuData[folds==k,], id=i)
+      cv.errors[k,i] = mean((cpuData$PRP[folds==k]-pred)^2)
+      testMSE = mean((cpuData$PRP[folds==k]-pred)^2)
+      tempDF = rbind(tempDF, data.frame(fold=k, sel=jSelect, vars=i, 
+      mseTot = c(testMSE, summary(regSubs)$rss[i]/sum(folds!=i)), trainsTests=c("test","train")))
+    }
+  }
+}
+ggplot(tempDF,aes(x=factor(vars),y=mseTot,colour=sel)) + geom_boxplot()+facet_wrap(~trainsTests)
+```
+
+Using cross validation, the same results are seen as with the 30 try validation above. The models with four variables minimize MSE the best across all four subset methods. It is interesting to note that the MSE for the test data has much wider boxplots and are much more variable compared to the training data boxplots which were far more narrow. This is likley to be due to the nature of cross validation that uses k number of folds where the training data is (k-1)*n/k in size and the test data is n/k in size (n = sample size and k = number of folds). Since the training data is much larger in size, it has a better ability to minimize error when fitting a model. On the other hand, since the test data is a fraction of the size of the total data and different sections of these folds test the trained model this will result in large variability in RSS and higher error. 
+
+# Problem 3: lasso regression (15 points)
+
+Fit lasso regression model of PRP in computer hardware dataset.  Plot and discuss `glmnet` and `cv.glmnet` results.  Compare coefficient values at cross-validation minimum MSE and that 1SE away from it -- which coefficients are set to zero?  Experiment with different ranges of `lambda` passed to `cv.glmnet` and discuss the results.
+
+```{r, eval=TRUE}
+xVals = model.matrix(PRP~., cpuData)[,-1]
+yVals = cpuData[, "PRP"]
+
+# Lasso
+Lasso = glmnet(xVals, yVals, alpha=1)
+plot(Lasso)
+
+# add labels to plot/this may not be included in the RMD
+library(plotmo)
+plot_glmnet(Lasso)
+
+# CV Lasso
+cvLasso = cv.glmnet(xVals, yVals, alpha=1)
+plot(cvLasso)
+cvLasso$lambda.min
+cvLasso$lambda.1se
+predict(cvLasso, type="coefficients", s=cvLasso$lambda.min)
+predict(cvLasso, type="coefficients", s=cvLasso$lambda.1se)
+
+# differnt ranges of lambda
+grid = 10^seq(5, -5, length=150)
+cvLassoExpand = cv.glmnet(xVals, yVals, alpha=1, lambda=grid)
+plot(cvLassoExpand)
+cvLassoExpand$lambda.min
+cvLassoExpand$lambda.1se
+predict(cvLassoExpand, type="coefficients", s=cvLassoExpand$lambda.min)
+predict(cvLassoExpand, type="coefficients", s=cvLassoExpand$lambda.1se)
+```
+
+First, the glmnet() plot shows five variables in the plot. These are MMAX, MMIN, CHMIN, CACH, and CHMAX. MYCT is actually excpluded. We see that the right half of the plot includes five variables from L1 Norm of 0.6-1.0. Then the variables start to taper off with light blue (CHMAX) and then blue (CHMIN). The last three variables renaububg are CACH (green), MMIN (red), and MMAX (black). Overall, this plot seems to favor the five variable model, whic hexludes MYCT.
+
+On the cv.glmnet() plot and output, we see that for the minimum MSE and 1SE the only variable set to 0 is MYCT. This supports the findings in the glmnet() plot that the lasso method favors a five variable model. We see that the coefficients are lower for 1SE compared to the min MSE, which makes sens since 1SE has a higher lambda which results in a higher penalty for multiple coefficients and reduced values for the coefficients. This plot shows that Lasso favors a five variable model, which is different from the subset results that favored four. 
+
+For the graph with an expanded range of log(Lambda), we see that after 0, all the coefficients are removed from the model and the MSE is high. We also see that before -7, to the left of the line for minimum MSE, the model does include six variables. But this is for a lambda value that is almost 0, which would make sense since it removes the penalty of lambda from the model, allowing for all variables to be included. Besides those two extreme cases of lambda, the model still favors five variables for min MSE and 1SE. 
+
+Note: I had difficulty designing a legend or adding labels to the lines in plot(Lasso) so I used an outside package plotmo that automatically labels each line with their corresponding variables. So for the original lasso plot (first plot) the variables are as follows based on color: MMAX (black), MMIN (red), CHMIN (blue), CACH (green), CHMAX (light blue/teal).
+
+# Problem 4: lasso in resampling (15 points)
+
+Similarly to the example shown in Preface above use resampling to estimate test error of lasso models fit to training data and stability of the variable selection by lasso across different splits of data into training and test.  Use resampling approach of your choice.  Compare typical model size to that obtained by the best subset selection above.  Compare test error observed here to that of ERP and PRP -- discuss the result.
+
+```{r, eval=TRUE}
+lassoCoef = 0
+lasMSE = NULL
+for(i in 1:30){
+  bT = sample(rep(c(TRUE, FALSE), length.out=nrow(xVals)))
+  cvLaTrain = cv.glmnet(xVals[bT, ], yVals[bT], alpha=1, lambda=10^((-120:0)/20))
+  laTrain = glmnet(xVals[bT, ], yVals[bT], alpha=1, lambda=10^((-120:0)/20))
+  laTrainCoef = predict(laTrain, type="coefficients", s=cvLaTrain$lambda.1se)
+  lassoCoef = lassoCoef + (laTrainCoef[-1,1]!=0)
+  laTestPred = predict(laTrain, newx=xVals[!bT, ], s=cvLaTrain$lambda.1se)
+  lasMSE = c(lasMSE, mean((laTestPred-yVals[!bT])^2))
+}
+mean(lasMSE)
+lassoCoef
+```
+
+The Lasso coefficient counts show that out of 30 models, the five variables, MMAX, MMIN, CACH, MYCT, CHMIN, and CHMAX, were included in almost all of the sampled models. MYXT was included in only 8 sample models, which amounts to less than a third of the models. These counts corroborate the results found in the previous problem where the Lasso method favors a five variable model. 
+
+If we compare the Lasso mean MSE with the ERP MSE from homework 4, we see that the mean MSE for Lasso is lower at 0.22 compared to the ERP calculated for the same six variables at 0.26. Again, we see that the slight overestimation of ERP by the authors has led to more error in their prediction model. Using validation with Lasso, we see that the average model chose would have a lower MSE than ERP.
+
+# Extra 10 points problem: ridge regression
+
+Fit ridge regression model of PRP in computer hardware dataset.  Plot outcomes of `glmnet` and `cv.glmnet` calls and discuss the results.  Compare coefficient values at cross-validation minimum MSE and that 1SE away from it.  Experiment with different ranges of `lambda` passed to `cv.glmnet` and discuss the results.  Estimate test error (MSE) for ridge model fit on train dataset over multiple training and test samples using any resampling strategy of your choice.
+
+```{r, eval=TRUE}
+# Ridge
+Ridge = glmnet(xVals, yVals, alpha=0)
+plot(Ridge)
+
+# add labels to plot/this may not be included in the RMD
+library(plotmo)
+plot_glmnet(Ridge)
+
+# CV Lasso
+cvRidge = cv.glmnet(xVals, yVals, alpha=0)
+plot(cvRidge)
+cvRidge$lambda.min
+cvRidge$lambda.1se
+predict(cvRidge, type="coefficients", s=cvRidge$lambda.min)
+predict(cvRidge, type="coefficients", s=cvRidge$lambda.1se)
+
+# differnt ranges of lambda
+grid = 10^seq(5, -5, length=150)
+cvRidgeExpand = cv.glmnet(xVals, yVals, alpha=0, lambda=grid)
+plot(cvRidgeExpand)
+cvRidgeExpand$lambda.min
+cvRidgeExpand$lambda.1se
+predict(cvRidgeExpand, type="coefficients", s=cvRidgeExpand$lambda.min)
+predict(cvRidgeExpand, type="coefficients", s=cvRidgeExpand$lambda.1se)
+```
+
+The Ridge plot for glmnet() shows all six variables for each L1 Norm, since Ridge reduces the values of coefficient but still includes all variables. We see the blue line (MYCT) has a negative coefficient value and is reduced toward 0 for L1 Norm greater than 1.0 and less than 0.4. Based on the Ridge Regression model, MYCT is the variable targeted for reduction, while the other variables have substantial coefficients in the model.
+
+We see this in the output for the minimum MSE and 1SE predictions. Min MSE has MYCT at -0.09 which is close to the next lowest coefficient for CACH at 0.13. However, once lambda increases for 1SE, we see that the coefficient for MYCT decreases to -0.02, which is substantially lower than the next highest coefficient CHMAX at -0.12. So the increase in lambda shows that MYCT is the target variable to be reduced out of the six, leaving five other variables to affect the model. 
+
+With the expansion in scale of lambda, there is not much to take away from the plot. All six variables are included in the model due to Ridge Regressions method. But similar to Lasso, we see that MSE increases rapidly after log(lambda) is 0. Based on the findings above, this is likley due to the reduction of all variables coefficients as lambda gets larger, which leads to larger penalties for multiple variables. 
+
+```{r, eval=TRUE}
+# validation for Ridge Regression
+ridgeCoef =0
+ridgeMSE = NULL
+for(i in 1:30){
+  trainB = sample(rep(c(TRUE,FALSE), length.out=nrow(xVals)))
+  cvRidgeTrain = cv.glmnet(xVals[trainB, ], yVals[trainB], alpha=0, lambda=10^((-120:0)/20))
+  ridgeTrain = glmnet(xVals[trainB, ], yVals[trainB], alpha=0, lambda=10^((-120:0)/20))
+  ridgeTrainCoef = predict(ridgeTrain, type="coefficients", s=cvRidgeTrain$lambda.1se)
+  ridgeCoef = ridgeCoef + (ridgeTrainCoef[-1,1]!=0)
+  ridgeTestPred = predict(ridgeTrain, newx=xVals[!trainB, ], s=cvRidgeTrain$lambda.1se)
+  ridgeMSE = c(ridgeMSE, mean((ridgeTestPred-yVals[!trainB])^2))
+}
+mean(ridgeMSE)
+ridgeCoef
+```
+
+As standard with the Ridge Regression method, all variables are included in the model with varying values for the coefficients. It is important to note that the calculated mse for Ridge Regression is 0.22, similar to the Lasso method. Again, this is lower than the MSE for ERP on six variables at 0.26. The authors estimates account for higher error due to their process of estimation, possible their measurments, calculations, or other factors.  
+

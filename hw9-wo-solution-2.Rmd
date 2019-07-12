@@ -1,0 +1,302 @@
+---
+title: "CSCI E-63C Week 9 Problem Set"
+author: "Erik Lee"
+output:
+  html_document:
+    toc: true
+---
+
+# Preface
+
+For this week problem set we will use banknote authentication data (the one we worked with on week 2) to fit logistics regression model and evaluate performance of LDA, QDA and KNN classifiers.  As we have seen earlier this dataset should allow to predict fairly well which banknotes are authentic and which ones are forged, so we should expect to see low error rates for our classifiers.  Let's see whether some of those tools perform better than others on this data.
+
+# Problem 1 (10 points): logistic regression
+
+Fit logistic regression model of the class attribute using remaining four attributes as predictors in the model.  Produce summary of the model, describe which attributes appear to be significantly associated with the categorical outcome in this model.  Use this model to make predictions on the entire dataset and compare these predictions and corresponding true values of the class attribute using confusion matrix (i.e. contingency table).  Calculate error rate (would this be training or test error in this case?), sensitivity and specificity (assuming that we are predicting class "1").  Describe the results.
+
+```{r, eval=TRUE}
+# read data
+bank.data = read.table("data_banknote_authentication.txt", sep=",")
+
+# set column names, based off of the Attribute Information from UCI Matchine Learning website
+#attributeNames = c("Variance", "Skweness", "Curtosis", "Entropy", "Class")
+#colnames(bank.data) = attributeNames
+
+# fit logistic regression
+glm.fit = glm(V5~V1+V2+V3+V4, data=bank.data, family=binomial)
+
+# summary 
+summary(glm.fit)
+```
+
+Variables 1, 2, and 3 seem significantly associated with the outcome variable, V5 or Class. These are Variance, Skewness and Curtosis. Variable 4, or Entropy, is not significantly associated with class. We see that it hass a P-value of 0.0672 which is greater than 0.05. 
+
+```{r, eval=TRUE}
+# prediction for logistic regression
+glm.probs = predict(glm.fit, type="response")
+
+# create confusion matrix
+glm.pred = rep(0, 1372)
+glm.pred[glm.probs > 0.5] = 1
+
+table(glm.pred, bank.data$V5)
+# correct predictions
+(757+604)/1372
+# compute fraction of correctly predicted banknotes
+mean(glm.pred==bank.data$V5)
+
+# error rate
+1-mean(glm.pred==bank.data$V5)
+
+# function adapted from the slides for sensistivity and specificity
+assess.prediction=function(truth, predicted){
+  result = list()
+  # remove NAs
+  predicted = predicted[!is.na(truth)]
+  truth = truth[!is.na(truth)]
+  truth = truth[!is.na(predicted)]
+  predicted = predicted[!is.na(predicted)]
+  
+  TP = sum(truth==1 & predicted==1)
+  TN = sum(truth==0 & predicted==0)
+  FP = sum(truth==0 & predicted==1)
+  FN = sum(truth==1 & predicted==0)
+  
+  P = TP+FN
+  N = FP+TN
+  
+  sens = TP/P
+  spec = TN/N
+
+  result = c(result, sens)
+  result = c(result, spec)
+  
+  return(result)
+  
+}
+
+# sensistivity and specificity
+metrics = assess.prediction(ifelse(bank.data$V5==1, 1, 0), ifelse(glm.probs>0.5, 1, 0))
+metrics[1] # sensitivity
+metrics[2] # specificity
+```
+
+From the confustion matrix, we obtain an error rate of 0.008017493 or 0.8%. This value seems almost too optimistic as it represents the training error rate. Since the model was trained on all of the bank note data and utilizes all the attributes, it is likely that such an optimistic error rate is due to overfitting and may not perform as well on a test set. Above we also calculate a sensitivity of 0.9901639 and specificity of 0.9934383. This is a good indication that our model is similar to the Class values in the data and minimizes false positive and false negative results. These values seem pretty high given the data, but this may also be a result of overfitting the logistic regression on the data. To create a model that may be better predicting on test data and have lower test error rate, we may want to remove V4 or Entropy, which we found not to be significantly related to Class, to see how a logisitc model may perform. 
+
+# Problem 2 (10 points): LDA and QDA
+
+Using LDA and QDA implementations available in the package `MASS`, fit LDA and QDA classifiers on the entire dataset and calculate confusion matrix, (training) error rate, sensitivity and specificity for each of them.  Compare them to those of logistic regression.  Describe the results.
+
+```{r, eval=TRUE}
+library(MASS)
+# linear discriminant analysis
+lda.fit = lda(V5~V1+V2+V3+V4, data=bank.data)
+# summary
+lda.fit
+
+# predictions
+lda.pred = predict(lda.fit, bank.data)
+lda.class = lda.pred$class
+
+# confusion matrix
+table(lda.class, bank.data$V5)
+
+# correct predictions
+(730+610)/1372
+# compute fraction of correctly predicted banknotes
+mean(lda.pred$class==bank.data$V5)
+# error rate
+1-mean(lda.pred$class==bank.data$V5)
+
+# sensitivity and specificity
+met = assess.prediction(ifelse(bank.data$V5==1, 1, 0), ifelse(lda.pred$posterior[,2]>0.5, 1, 0))
+met[1]
+met[2]
+
+```
+
+Above we use the function lda() to develop a linear discriminant analysis model and use the predict function on this lda model to create a confusion matrix and obtain metrics. In the confusion matrix, we see the diagonal represents the correct predictions as compared to Class (V5 column) and we see 730 correct fakes and 610 correct reals. We also see outside the diagonal 32 false positives, where lda predicted a real bank not when it was reported fake in Class. We also calculate the training error rate as 0.02332362 or 2.33%. This is higher than the logistic regression above, since the lda predictions made so many false positive predictions. We also get a sensitivity of 1 and specifiticy of 0.9580052. Interestingly, our sensitivity for lda is 1, due to the fact that we have no false-negative results (lda predicts fake, when Class reports real), and we see that lda has higher sensitivity compared to our logistic regression. However, we do see that specificity is lower for lda compared to logistic because we ended up with so many false positives. If false-negatives (classifying a bank not fake, when it is real aka. denying real money at a bank) results are more important to avoid, lda may perform better in that regard over logistic. 
+
+```{r, eval=TRUE}
+# Quadratic Discriminant Analysis
+qda.fit = qda(V5~V1+V2+V3+V4, data=bank.data)
+# summary
+qda.fit
+
+# predictions
+qda.pred = predict(qda.fit, bank.data)
+qda.class = qda.pred$class
+
+# confusion matrix
+table(qda.class, bank.data$V5)
+
+# correct predictions
+
+# compute fraction of correctly predicted banknotes
+mean(qda.pred$class==bank.data$V5)
+# error rate 
+1-mean(qda.pred$class==bank.data$V5)
+
+# sensitivity and specificity
+met = assess.prediction(ifelse(bank.data$V5==1, 1, 0), ifelse(qda.pred$posterior[,2]>0.5, 1, 0))
+met[1]
+met[2]
+
+```
+
+For quadratic discriminant analysis, we get slighly better results compared to lda. First, we see that we have more correct predictions for fakse at 742, whereas lda only had 730. We still get the same number of correct real bank note predictions, and the number of false-positives is at 20 (lda had 32). The training error rate is at 0.01457726 or 1.45%, which is lower than lda but not as low as the logistic regression. We also have a sensitivity of 1 and specificity at 0.9737533. Specificity is higher for qda than lda since there are less false-positives, but logistic regression still has higher specificity than qda and lda. From these results, we see that for this particular data set, qda performs better than lda in terms of predictions and minimizing error on the training data. But it is unclear how qda will perform in comparison with a test set of data.
+
+# Problem 3 (10 points): KNN
+
+Using `knn` from library `class`, fit KNN classifiers for the entire dataset and calculate confusion matrix, (training) error rate, sensitivity/specificity for  $k=1$, $7$ and $23$ nearest neighbors models.  Compare them to the corresponding results from LDA, QDA and logistic regression. Describe results of this comparison and discuss whether it is surprising to see low *training* error for KNN classifier with $k=1$.
+
+```{r, eval=TRUE}
+library(FNN)
+# KNN
+train <- sample(rep(c(TRUE,FALSE),length.out=nrow(bank.data)))
+train.X = bank.data[train,-5]
+test.X = bank.data[!train,-5]
+train.V5 = bank.data$V5[train]
+
+set.seed(1)
+
+# k=1
+knn.pred = knn(train.X, test.X, train.V5, k=1)
+  table(knn.pred, bank.data$V5[!train]) # confusion matrix
+  1-mean(knn.pred==bank.data$V5[!train]) # training error
+  metrics = assess.prediction(ifelse(bank.data$V5[!train]==1, 1, 0), ifelse(knn.pred==1, 1, 0))
+  metrics[1] # sensitivity
+  metrics[2] # specificity
+  
+# k=7
+knn.pred = knn(train.X, test.X, train.V5, k=7)
+  table(knn.pred, bank.data$V5[!train]) # confusion matrix
+  1-mean(knn.pred==bank.data$V5[!train]) # training error
+  metrics = assess.prediction(ifelse(bank.data$V5[!train]==1, 1, 0), ifelse(knn.pred==1, 1, 0))
+  metrics[1] # sensitivity
+  metrics[2] # specificity
+  
+# k=23
+knn.pred = knn(train.X, test.X, train.V5, k=23)
+  table(knn.pred, bank.data$V5[!train]) # confusion matrix
+  1-mean(knn.pred==bank.data$V5[!train]) # training error
+  metrics = assess.prediction(ifelse(bank.data$V5[!train]==1, 1, 0), ifelse(knn.pred==1, 1, 0))
+  metrics[1] # sensitivity
+  metrics[2] # specificity
+
+```
+
+Above we fit the data to a K Neares Neighbor classification, and return values for K at 1, 7, and 23. Interestingly, we get a training error of 0 when K=1. This is likely due to setting K=1 will classify each point based on its own location only resulting in an overflexible fit. We see that as we increase to K=7 and K=23, the training errors increase to 0.005830904 and 0.01020408 respectively (0.583% and 1.02%). At K=7, the training error is actually lower than Logisitc regression (0.08%), LDA (2.33%), and QDA (1.45%). In fact, we see in the confusion matrix for K=7, there are no false-negatives and 4 false postitives. As a result, we have the high Sensitivity at 1 and Specificity 9892761, compared to the previous methods. It would be important to test how each method fairs on test data to calculate test error. 
+
+# Problem 4 (30 points): compare test errors of logistic regression, LDA, QDA and KNN
+
+Using resampling approach of your choice (e.g. cross-validation, bootstrap, etc.) obtain test error as well as sensitivity and specificity for each of these methods (logistic regression, LDA, QDA, KNN with $k=1,2,5,11,21,51,101$).  Present results in the form of boxplots, compare test error/sensitivity/specificity across these methods and discuss their relative performance.
+
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(glmnet)
+# Logistic Regression with 10-fold CV
+
+set.seed(3)
+
+tempDf = NULL
+kFolds=10
+folds = sample(1:kFolds, nrow(bank.data), replace=T)
+
+sens = numeric()
+spec = numeric()
+
+metDf = NULL
+
+for(k in 1:kFolds){
+  glm.fit = glm.fit = glm(V5~V1+V2+V3+V4, data=bank.data[folds!=k,], family=binomial)
+  
+  for(i in 1:10){
+    glm.probs = predict(glm.fit, data=bank.data[folds==k], type="response")
+    glm.pred = rep(0, 1372)
+    glm.pred[glm.probs > 0.5] = 1
+    
+    err = 1-mean(glm.pred==bank.data$V5)
+    
+    met = assess.prediction(ifelse(bank.data$V5==1, 1, 0), ifelse(glm.probs>0.5, 1, 0))
+    sens = c(sens, met[1])
+    spec = c(spec, met[2])
+    
+    tempDf = rbind(tempDf, data.frame(fold=k, sel="LOG", err=err))
+    
+  }
+}
+
+for(k in 1:kFolds){
+  lda.fit = lda(V5~V1+V2+V3+V4, data=bank.data[folds!=k,])
+  
+  for(i in 1:10){
+    lda.pred = predict(lda.fit, bank.data[folds==k,])
+    err = 1-mean(lda.pred$class==bank.data$V5)
+    
+    met = assess.prediction(ifelse(bank.data$V5==1, 1, 0), ifelse(lda.pred$posterior[,2]>0.5, 1, 0))
+    sens = c(sens, met[1])
+    spec = c(spec, met[2])
+    
+    
+    tempDf = rbind(tempDf, data.frame(fold=k, sel="LDA", err=err))
+  }
+}
+
+for(k in 1:kFolds){
+  qda.fit = qda(V5~V1+V2+V3+V4, data=bank.data[folds!=k,])
+  
+  for(i in 1:10){
+    qda.pred = predict(qda.fit, bank.data[folds==k,])
+    err = 1-mean(qda.pred$class==bank.data$V5)
+    
+    met = assess.prediction(ifelse(bank.data$V5==1, 1, 0), ifelse(qda.pred$posterior[,2]>0.5, 1, 0))
+    sens = c(sens, met[1])
+    spec = c(spec, met[2])
+    
+    tempDf = rbind(tempDf, data.frame(fold=k, sel="QDA", err=err))
+  }
+}
+
+for(k in 1:kFolds){
+  for(kn in c(1,2,5,11,21,51,101)){
+    knn.pred = knn(bank.data[!folds==k,], bank.data[folds==k,], bank.data$V5[!folds==k], k=kn)
+    for(i in 1:10){
+      err = 1-mean(knn.pred==bank.data$V5[folds])
+      
+      metrics = assess.prediction(ifelse(bank.data$V5==1, 1, 0), ifelse(knn.pred==1, 1, 0))
+    sens = c(sens, met[1])
+    spec = c(spec, met[2])
+      
+      tempDf = rbind(tempDf, data.frame(fold=k, sel=paste("KNN", kn, sep=" "), err=err))
+    }
+  }
+}
+
+# combine sensitivity and specificity vectors to dataframe
+sens2 = unlist(sens, use.names=FALSE)
+spec2 = unlist(spec, use.names=FALSE)
+
+sens3 = ifelse(is.na(sens2), 1, sens2)
+
+tempDf[, "sens"] = sens3
+tempDf[, "spec"] = spec2
+
+# ggplot boxplots for err, sensitivity, and specificity
+ggplot(tempDf, aes(x=sel, y=err, colour=sel)) + geom_boxplot()
+ggplot(tempDf, aes(x=sel, y=sens, colour=sel)) + geom_boxplot()
+ggplot(tempDf, aes(x=sel, y=spec, colour=sel)) + geom_boxplot()
+```
+
+
+Above we see the Test errors for each classification type. It is interesting to note that the logistic regression has the median test error of all the methods. We also see that LDA and QDA have similar median test error and seem to produce the highest error compared to logistic and KNN. The median test error for each value of K in KNN seems consistent, but we also see that the boxplots have increased test error as K gets larger from 1 up to 101. 
+
+For the second plot of Sensitivity, we see that the logisitic regression has the lowest Sensitivity below 0.990. The rest of the methods (LDA, QDA, and KNN at various K values) have sensitivities at 1. We saw the same results for the confusion matricies above where methods like LDA, QDA, and KNN were able to keep false-negative results at 0 and keep Sensitivity at 1.
+
+On the third plot, we see the results for Specificity for each method. The Logistic regression has the highest specificity at a median close to 0.9. Interestingly, the KNN classifiers at each value of K all have the same Specificity at 0.55. This may be an error in calculation or because the KNN function is limited, even at varying K values, to predict a set number of false-positive results and recieve the same Specificity, independent of how many nearest neightbors are being considered. We also see that QDA has a similar specificity at 0.55 and LDA has a slightly lower specificity.
+
+It is hard to determine which classifying method is the best, but it seems that Logistic Regression has all around lower training and test MSE, relatively high Sensitivity, and high Specificity as compared to LDA, QDA, and KNN. It is important to note that these results are specific to the bank note data and would be different on any other run of the data (seeds were set to control the results) or different data set. It is not definitve proof in favor of Logisitic over any other methods.
+
+# Extra 20 points problem: naive Bayes classifier
+
+Fit naive Bayes classifier (see lecture slides for examples of using `naiveBayes` function from package `e1071`) on banknote authentication dataset and assess its performance on test data by resampling along with logistic regression, LDA, QDA and KNN in Problem 4 above.  In other words, add naive Bayes to the rest of the methods evaluated above *and explain notable increase in the test error* for the naive Bayes classifier.  Please notice that the requirement for *explaining* the difference in performance of the naive Bayes classifier comparing to all others is essential for earning all the points available for this problem.  This is an extra point problem designed to be a level harder than the rest -- ideally, the explanation, aside from correctly pointing at the source of degraded performance, should also include numerical/graphical illustration of its effect using informative representation of banknote authentication data or relevant simulated data.  Best of luck!

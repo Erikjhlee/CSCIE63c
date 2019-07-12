@@ -1,0 +1,218 @@
+---
+title: 'CSCI E-63C: Week 3 Problem Set'
+author: 'Erik Lee'
+output:
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE, results='hide'}
+library(ggplot2)
+library(ISLR)
+library(car)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preface
+
+The goal of this week problem set is to practice basic tools available in R for developing linear regression models with one or more variables, conduct visual and quantitative evaluation of their relative performance and reason about associated tradeoffs.  We will continue working with abalone dataset (that you have already downloaded and used for the previous week problem set) and will use some of the variables available there to develop model of snail age.  Given the simplicity of the measurements available in this dataset (essentially just dimensions and masses of various compartments of the mollusc) and potential variability in growth rates due to differences in environmental conditions (e.g. location, temperature, nutrients, etc.) that are not captured in this dataset, we should expect substantial fraction of variability in abalone age to remain unexplained as part of this exercise.  Furthermore, given strong correlations between some of the predictors in this dataset it is possible that only a small number of those could be justifiably used in the model (for the reasons related to collinearity - see Ch.3.3.3 section 6 of ISLR).
+
+```{r abalone, echo=FALSE, results='hide'}
+abaDat <- read.table("abalone.data",sep=",")
+colnames(abaDat) <- c("sex","len","diam","h","ww","sw","vw","sh","rings")
+abaDat$age <- abaDat$rings+1.5
+dim(abaDat)
+```
+
+Here an uninspiring example of the model of shell length and diameter is used to illustrate R tools that will be needed for this problem set.  Please note that by this time `abaDat` dataset has been already created and corresponding columns have been named `len` and `diam` respectively -- the variable names in your code likely will be different.  Then a simple linear model can be fit using function `lm()` and summarized using `summary`:
+
+```{r diamlensumm}
+summary(lm(len~diam,abaDat))
+```
+
+The plot of predictor and response with regression line added to it can be generated using standard R functions `plot` and `abline`:
+
+```{r diamlenplot}
+plot(abaDat[,c("diam","len")])
+abline(lm(len~diam,abaDat))
+```
+
+Diagnostic plots for this model can be obtained also by the call to `plot` with `lm()` result as input:
+
+```{r diamlendiag,fig.width=8,fig.height=8}
+old.par <- par(mfrow=c(2,2))
+plot(lm(len~diam,abaDat))
+par(old.par)
+```
+
+R functions `confint` returns confidence intervals for model parameters and `predict` (with appropriate parameters) returns model predictions for the new data and corresponding estimates of uncertainty associated with them:
+
+```{r diamlenintls}
+confint(lm(len~diam,abaDat))
+predict(lm(len~diam,abaDat),newdata=data.frame(diam=c(0.2,0.3,0.4,0.5)),interval='confidence')
+predict(lm(len~diam,abaDat),newdata=data.frame(diam=c(0.2,0.3,0.4,0.5)),interval='prediction')
+```
+
+# Problem 1: model of age and shell weight (30 points)
+
+Here we will identify variable most correlated with the outcome (abalone age), build simple linear model of snail age (rings+1.5 as per dataset description) as function of this variable, evaluate model summary and diagnostic plots and assess impact of using log-transformed (instead of untransformed) attributes on the model peformance.  The following steps provide approximate outline of tasks for achieving these goals:
+
+1. Calculate correlations between all *continuous* attributes in this dataset.  Given potential non-linear relationship between some of the attributes and snail age, it might be prudent to use both Pearson and Spearman correlations to determine which variable is most robustly correlated with age.
+
+```{r, eval=TRUE}
+# Pearson Correlation
+cor(abaDat[,2:8], method="pearson")
+# Spearman Correlation
+cor(abaDat[,2:8], method="spearman")
+```
+
+
+2. Fit linear model of age as outcome and shell weight as predictor using R function `lm`, display the result using `summary` function, use its output to answer the following questions:
+
+```{r, eval=TRUE}
+x=abaDat$sh
+y=abaDat$age
+fit = lm(y~x, abaDat)
+summary(fit)
+```
+
+
+   + Does this predictor explain significant amount of variability in response?  I.e. is there significant association between them?
+   
+   Yes, shell weight as the predictor does explain a significant amount of variability in the response, age. We can see this from the p-value (Pr(>|t|)) if <2e-16, which is less than 0.05 and significant, for shell weight (abaDat$sh). The three stars (***) provides a Signif. code of 0, indicating significance i nthe variable.
+   
+   + What is the RSE and $R^2$ of this model?  Remember, you can find them in the `summary` output or use `sigma` and `r.sq` slots in the result returned by `summary` instead
+   
+   The residual standard error is 2.51 on 4175 degrees of freedom. The R-sq is 0.3938 and adjusted R-sq is 0.3937.
+   
+   + What are the model coefficients and what would be their interpretation? What is the meaning of the intercept of the model, for example?  How sensible is it?
+   
+   The slope coefficient (b_1) for shell weight is 14.53568 and the y-intercept coefficient (b_0) is 7.96212. The slope represents the change in the response, age, related to the predictor, shell weight based on the model. This translates more practically to an in increase of age by 1 for every increase in shell weight of 14.53568. The intercept represents the expected mean of Y, age, when the predictor is 0 (X=0). The intercept is not a sensible value, since it claims that if the shell weight (X) is 0, the model predicts the number of rings as 7.96212 (the age is 7.96212 + 1.5 years). It does not make sense because a shell weight of 0 means the abaolone does not exist, so no age can be given. The Intercept is only relevant for the accuracy of the model and does not tell anything about the relationship between X and Y. 
+
+3. Create scatterplot of age and shell weight and add regression line from the model to the plot using `abline` function
+
+```{r}
+# scatterplot of age vs. shell weight
+plot(x=abaDat$sh, y=abaDat$age, xlab="Shell Weight", ylab="Age", main="Shell Weight vs. Age")
+abline(fit, col="red")
+```
+
+
+4. Create diagnostic plots of the model and comment on any irregularities that they present.  For instance, does plot of residuals vs. fitted values suggest presence of non-linearity that remained unexplained by the model?  How does it compare to the plot of the predictor and outcome with regression line added to it that was generated above?
+
+```{r, eval=TRUE}
+#oldpar = par(mfrow=c(2,2))
+plot(fit)
+#par(oldpar)
+```
+
+In the Residuals vs. Fitted plot, there seems to be a slight curve or downward slope in the red line. Since this is not a stright horizontal fit, there may be some underlying nonlinearity in the residuals. When we look at the original plot, it seems that the data may follow a nonlinear pattern, possibly a logarithmic shape, and could be transformed. The previous plot above has a red trendline that is completely horizontal to 0.0 for Residuals. 
+
+The Q-Q plot has linearity for most of the data points, but once at a Q-Q past 2, the plot curves upaward and deviates from the dotted line (indicating the linear path). A curved Q-Q could indicate skewedness in the sample data. The Q-Q plot generated above is linear and follows the dotted line well.
+
+In the Scale-Location plot, we see the red trendline increase or have a positive slope as the Fitted values increase. There sems to be a pattern where the Standardized Residuals interweave, and this may indicate a nonlinear relationship between the predictor and outcome. This is further evidence to try to transform the outcome and check the residual plots. The plot above is similar in having a slight positive curve showing potential heteroscedasticity.  
+
+For the Residuals vs Leverage plot, we see that there is a heavy skew/asymmetry in the direction of positive Standardized Residuals. This causes the red trendline to curve downward, away from the dotted line for 0. This supports the idea of a nonlinear relationship that was not explained in the model. The previous model above has a symmetrical shape for the Residuals vs. Leverage plot and has a red trendline that horizonally follows the dotted line for 0.
+
+5. Use function `confint` to obtain confidence intervals on model parameters
+
+```{r, eval=TRUE}
+confint(fit)
+```
+
+
+6. Use this model and `predict` function to make predictions for shell weight values of 0.1, 0.2 and 0.3. Use `confidence` and `prediction` settings for parameter `interval` in the call to `predict` to obtain confidence and prediction intervals on these model predictions.  Explain the differences between interpretation of:
+    + confidence intervals on model parameters and model predictions
+    + confidence and prediction intervals on model predictions
+    + Comment on whether confidence or prediction intervals (on predictions) are wider and why
+
+```{r, eval=TRUE}
+# confidence interval
+predict(fit, data.frame(x=c(0.1,0.2,0.3)), interval="confidence")
+# prediction interval
+predict(fit, data.frame(x=c(0.1,0.2,0.3)), interval="prediction")
+
+```
+
+The confidence interval for model parameters tells you how well the model has determined the mean for a parameter and how close the mean is to the true population parameter. The confidence interval for model predictions tells about the distribution of values and where the predicted data point would be. Both have a range of values the true parameter or prediction can assume with a given level of confidence.
+
+The confidence interval for a model prediction measures how confident we are that the true prediction model lies within the confidence interval. The prediction interval for a model prediction provides the likelihood that the predicted Y-value of a model will be within the interval range around the regression line.
+
+The prediction intervals on predictions is wider than the confidence interval on predictions. The confidence interval will consider the range for the expectation of y given x, which takes into account the error explained by the predictor. On the other hand, the prediction interval considers the predicted value of y that follows the model regression (variability explained by x) and the error that is not captured by the model (variability not explained by x). The addition of the random error term, epsilon, makes the prediction intervals wider. 
+
+# Problem 2: model using log-transformed attributes (20 points)
+
+1. Use `lm()` to fit a regression model of *log-transformed* age as linear function of *log-transformed* shell weight and use `summary` to evaluate its results.  Can we compare fits obtained from using untransformed (above) and log-transformed attributes?  Can we directly compare RSE from these two models?  What about comparing $R^2$?  What would we conclude from this? (Please consult ISLR Ch.3.1.3 if unsure)  What would be the physical meaning of model coefficients this time?  What does model intercept represent in this case, for example?  How sensible is this and how does it compare to that from the fit on untransformed data?
+
+```{r}
+# log transformed x and y
+logx = log(abaDat$sh)
+logy = log(abaDat$age)
+# regression model
+fit = lm(logy~logx)
+# summary
+summary(fit)
+```
+
+We can not directly compare the attributes of the original model and the log-transformed model because the units are different. In the original, shell weight is in grams and age is in rings+1.5 years. In the log-transformed model, the units are the log of the grams and the log of the rings+1.5 years. However, we can compare the RSE from these two models since this depends on the residual errors, which calculats the difference between the model prediction and actual value for each observation. 
+
+We can see that the log-transformed model has a lower RSE (0.1874) compared to the original model RSE (2.51), both on 4175 df. This indicates that the error due to the model is lower for the log-transformed function and fits the data better. The same goes for R-squared which explains the variance due to the model and depends on the residual error. The log-transformed model has a higher R-sq (0.5273) compared to the original model R-sq (0.3938). Yet another indication that the log-transformed model is better at minimizing error. We can conclude that the log-transformed model is better at minimizing error, and when applied to predictions, will help minimize prediction error.
+
+The coefficient beta_1 represents the estimated relationship between the predictor log(x) and response log(y). This translates to an increase of 1 to the log of the age for every increase of 0.243920 to the log of the shell weight. The intercept can be intepreted as the expected mean value of log(y) when log(x) is 0. When the predictor log(x) is 0, the actual value of x is 1, corresponding to a shell weight of 1 gram  (log(x)=0 -> 10^0=1). The log-transformation can not be literally interpreted because the units have been logged. However, since the model has a lower RSE and has lower error for between observed and predicted values, it makes sense to use this model over the original for more accurate predictions. The regression is better and predictions made in a log transformation can still be reversed, with the opposite transformation (exponential, 10^x), to give the original values.  
+
+
+2. Create a XY-scatterplot of log-transformed predictor and response and add corresponding regression line to it.  Compared it to the same plot but in untransformed coordinates obtained above.  What would you conclude from such comparison?
+
+```{r}
+#XY-scatter of log-transformed x and y
+plot(logx, logy, xlab="log(shell weight)", ylab="log(age)", main="log-transformed x and y")
+abline(fit, col="red")
+```
+
+The log-transformed scatter plot looks better than the original plot. The points are clustered closer togther and has less outliers/leverage points that diverge away from the trendline. The log-transformed plot has a linear shape that follows the regression, while the original plot had a curved shape where the data did not follow a linear trendline. Based on a simple comparison, the log-transformed graph follows the linear regression better and minimizes error better than the original plot.
+
+3. Make diagnostic plots for model fit on log-transformed age and shell weight.  Compare their appearance to that for the model using original scale of measurements. What would you conclude from this comparison about their relative quality?
+
+```{r}
+# diagnostic plots
+plot(fit)
+```
+
+With the Residual vs Fitted plot, there is a better trend line that is horizontal and follows 0.0 for Residuals, and the trendline does not curve in the negative direction as the original plot. Since the log-transformed plot has a horizontal trendline, there seems to be no discernable pattern in the residuals and they seem to be randomly distributed. It is worth noticing that they do cluster on the higher end around 2.5 for Fitted Values, but if we look back at the XY-scatter above, we see that most of the points are clustered at log(x) of -2 to 0. 
+
+The Normal Q-Q plot looks linear and does not have the drastic curve that the original Normal Q-Q plot had. It does not follow the dotted line exactly, but the XY-scatter above is not exactly linear.
+
+The Scale-Location trendline is horizontal indicating no heteroscedasticity. Although the left-hand sicde lacks as many datapoints as the right, we can see a consistent level of variability in the data accross the plot. 
+
+Finally, the Residual vs Leverage plot has a normal shape and distribution. There are three leverage points, which is as many as the orignal plot. But it is important to point out that the red trendline follows the Standardized Resdials of 0 for the most part, and is not skewed in a positive direction or curve negatively with the trend line like the original plot. 
+
+# Problem 3: Adding second variable to the model (10 points)
+
+To explore effects of adding another variable to the model, continue using log-transformed attributes and fit a model of log-transformed age as a function of shell weight and shucked weight (both log-transformed also).  Just an additive model -- no interaction term is necessary at this point. Please obtain and evaluate the summary of this model fit, confidence intervals on its parameters and its diagnostic plots. Where applicable, compare them to the model obtained above and reflect on pros and cons of including shucked weight as another variable into the model.
+
+
+```{r, eval=TRUE}
+# logged attributes
+logx1 = log(abaDat$sh)
+logx2 = log(abaDat$sw)
+logy = log(abaDat$age)
+
+# regression
+fit = lm(logy ~ logx1+logx2)
+
+# summary
+summary(fit)
+
+# confidence intervals
+confint(fit)
+
+# diagnostic plots
+plot(fit)
+
+```
+
+There are a couple of pros for adding the log-transformed data for shucked weight. First, it is important to note that each parameter still passes the p-value test by being <2e-16, so both are signficiant predictors in the model. The multivariable model has a lower RSE (0.1717) compared to the univariate RSE (0.1874) and has a higher R-squared (0.6035) compared to the above R-squared (0.5273). Both indicate that this multivariate model is even better at minimizing error between the model predictions and observed values. Additionally, the Residual vs Fitted plot still has a horizontal red trendline following 0.0, indicating no underlying relationship for the residuals. And the clustering on the right side also seems less drastic. The Normal Q-Q plot appears linear and follows the dotted line well as compared to the previous Normal Q-Q. 
+
+The cons can be seen in the final two diagnostic plots. The Scale-Location plot's red trendline has a slight bend/curve upward, which may indicate a potential of heteroscedasticity (change in the variance of the plot). The previous model has a completely horizontal red trend line. The Residuals vs Leverage plot also has a red trend line that bends further upward to a Standardized Residual of +4. The Residuals vs Leverage plot for the single variable model has a less drastic bend up to +1 for Standardized Residuals. The two variable model seems to show a greater number of postive Resdiuals, but still has the same number of leverage points (3). 
+
+It is important to assess the impact of minimzing errors over meeting the requirements for residuals of being random and normal. Since the assumptions for resdiuals is not broken in the multivariable log-transformed regression model, and the error is further reduced, this model proves it can be useful for predicting age.

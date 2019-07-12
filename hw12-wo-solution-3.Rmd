@@ -1,0 +1,729 @@
+---
+title: "CSCI E-63C Week 12 Problem Set"
+author: "Erik Lee"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+ptStart <- proc.time()
+library(neuralnet)
+library(ggplot2)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+library(grid)
+plot.nn <-
+function (x, rep = NULL, x.entry = NULL, x.out = NULL, radius = 0.15, 
+    arrow.length = 0.2, intercept = TRUE, intercept.factor = 0.4, 
+    information = TRUE, information.pos = 0.1, col.entry.synapse = "black", 
+    col.entry = "black", col.hidden = "black", col.hidden.synapse = "black", 
+    col.out = "black", col.out.synapse = "black", col.intercept = "blue", 
+    fontsize = 12, dimension = 6, show.weights = TRUE, file = NULL, 
+    ...) 
+{
+    net <- x
+    if (is.null(net$weights)) 
+        stop("weights were not calculated")
+    if (!is.null(file) && !is.character(file)) 
+        stop("'file' must be a string")
+    if (is.null(rep)) {
+        for (i in 1:length(net$weights)) {
+            if (!is.null(file)) 
+                file.rep <- paste(file, ".", i, sep = "")
+            else file.rep <- NULL
+            #dev.new()
+            plot.nn(net, rep = i, x.entry, x.out, radius, arrow.length, 
+                intercept, intercept.factor, information, information.pos, 
+                col.entry.synapse, col.entry, col.hidden, col.hidden.synapse, 
+                col.out, col.out.synapse, col.intercept, fontsize, 
+                dimension, show.weights, file.rep, ...)
+        }
+    }
+    else {
+        if (is.character(file) && file.exists(file)) 
+            stop(sprintf("%s already exists", sQuote(file)))
+        result.matrix <- t(net$result.matrix)
+        if (rep == "best") 
+            rep <- as.integer(which.min(result.matrix[, "error"]))
+        if (rep > length(net$weights)) 
+            stop("'rep' does not exist")
+        weights <- net$weights[[rep]]
+        if (is.null(x.entry)) 
+            x.entry <- 0.5 - (arrow.length/2) * length(weights)
+        if (is.null(x.out)) 
+            x.out <- 0.5 + (arrow.length/2) * length(weights)
+        width <- max(x.out - x.entry + 0.2, 0.8) * 8
+        radius <- radius/dimension
+        entry.label <- net$model.list$variables
+        out.label <- net$model.list$response
+        neuron.count <- array(0, length(weights) + 1)
+        neuron.count[1] <- nrow(weights[[1]]) - 1
+        neuron.count[2] <- ncol(weights[[1]])
+        x.position <- array(0, length(weights) + 1)
+        x.position[1] <- x.entry
+        x.position[length(weights) + 1] <- x.out
+        if (length(weights) > 1) 
+            for (i in 2:length(weights)) {
+                neuron.count[i + 1] <- ncol(weights[[i]])
+                x.position[i] <- x.entry + (i - 1) * (x.out - 
+                  x.entry)/length(weights)
+            }
+        y.step <- 1/(neuron.count + 1)
+        y.position <- array(0, length(weights) + 1)
+        y.intercept <- 1 - 2 * radius
+        information.pos <- min(min(y.step) - 0.1, 0.2)
+        if (length(entry.label) != neuron.count[1]) {
+            if (length(entry.label) < neuron.count[1]) {
+                tmp <- NULL
+                for (i in 1:(neuron.count[1] - length(entry.label))) {
+                  tmp <- c(tmp, "no name")
+                }
+                entry.label <- c(entry.label, tmp)
+            }
+        }
+        if (length(out.label) != neuron.count[length(neuron.count)]) {
+            if (length(out.label) < neuron.count[length(neuron.count)]) {
+                tmp <- NULL
+                for (i in 1:(neuron.count[length(neuron.count)] - 
+                  length(out.label))) {
+                  tmp <- c(tmp, "no name")
+                }
+                out.label <- c(out.label, tmp)
+            }
+        }
+        grid.newpage()
+        pushViewport(viewport(name = "plot.area", width = unit(dimension, 
+            "inches"), height = unit(dimension, "inches")))
+        for (k in 1:length(weights)) {
+            for (i in 1:neuron.count[k]) {
+                y.position[k] <- y.position[k] + y.step[k]
+                y.tmp <- 0
+                for (j in 1:neuron.count[k + 1]) {
+                  y.tmp <- y.tmp + y.step[k + 1]
+                  result <- calculate.delta(c(x.position[k], 
+                    x.position[k + 1]), c(y.position[k], y.tmp), 
+                    radius)
+                  x <- c(x.position[k], x.position[k + 1] - result[1])
+                  y <- c(y.position[k], y.tmp + result[2])
+                  grid.lines(x = x, y = y, arrow = arrow(length = unit(0.15, 
+                    "cm"), type = "closed"), gp = gpar(fill = col.hidden.synapse, 
+                    col = col.hidden.synapse, ...))
+                  if (show.weights) 
+                    draw.text(label = weights[[k]][neuron.count[k] - 
+                      i + 2, neuron.count[k + 1] - j + 1], x = c(x.position[k], 
+                      x.position[k + 1]), y = c(y.position[k], 
+                      y.tmp), xy.null = 1.25 * result, color = col.hidden.synapse, 
+                      fontsize = fontsize - 2, ...)
+                }
+                if (k == 1) {
+                  grid.lines(x = c((x.position[1] - arrow.length), 
+                    x.position[1] - radius), y = y.position[k], 
+                    arrow = arrow(length = unit(0.15, "cm"), 
+                      type = "closed"), gp = gpar(fill = col.entry.synapse, 
+                      col = col.entry.synapse, ...))
+                  draw.text(label = entry.label[(neuron.count[1] + 
+                    1) - i], x = c((x.position - arrow.length), 
+                    x.position[1] - radius), y = c(y.position[k], 
+                    y.position[k]), xy.null = c(0, 0), color = col.entry.synapse, 
+                    fontsize = fontsize, ...)
+                  grid.circle(x = x.position[k], y = y.position[k], 
+                    r = radius, gp = gpar(fill = "white", col = col.entry, 
+                      ...))
+                }
+                else {
+                  grid.circle(x = x.position[k], y = y.position[k], 
+                    r = radius, gp = gpar(fill = "white", col = col.hidden, 
+                      ...))
+                }
+            }
+        }
+        out <- length(neuron.count)
+        for (i in 1:neuron.count[out]) {
+            y.position[out] <- y.position[out] + y.step[out]
+            grid.lines(x = c(x.position[out] + radius, x.position[out] + 
+                arrow.length), y = y.position[out], arrow = arrow(length = unit(0.15, 
+                "cm"), type = "closed"), gp = gpar(fill = col.out.synapse, 
+                col = col.out.synapse, ...))
+            draw.text(label = out.label[(neuron.count[out] + 
+                1) - i], x = c((x.position[out] + radius), x.position[out] + 
+                arrow.length), y = c(y.position[out], y.position[out]), 
+                xy.null = c(0, 0), color = col.out.synapse, fontsize = fontsize, 
+                ...)
+            grid.circle(x = x.position[out], y = y.position[out], 
+                r = radius, gp = gpar(fill = "white", col = col.out, 
+                  ...))
+        }
+        if (intercept) {
+            for (k in 1:length(weights)) {
+                y.tmp <- 0
+                x.intercept <- (x.position[k + 1] - x.position[k]) * 
+                  intercept.factor + x.position[k]
+                for (i in 1:neuron.count[k + 1]) {
+                  y.tmp <- y.tmp + y.step[k + 1]
+                  result <- calculate.delta(c(x.intercept, x.position[k + 
+                    1]), c(y.intercept, y.tmp), radius)
+                  x <- c(x.intercept, x.position[k + 1] - result[1])
+                  y <- c(y.intercept, y.tmp + result[2])
+                  grid.lines(x = x, y = y, arrow = arrow(length = unit(0.15, 
+                    "cm"), type = "closed"), gp = gpar(fill = col.intercept, 
+                    col = col.intercept, ...))
+                  xy.null <- cbind(x.position[k + 1] - x.intercept - 
+                    2 * result[1], -(y.tmp - y.intercept + 2 * 
+                    result[2]))
+                  if (show.weights) 
+                    draw.text(label = weights[[k]][1, neuron.count[k + 
+                      1] - i + 1], x = c(x.intercept, x.position[k + 
+                      1]), y = c(y.intercept, y.tmp), xy.null = xy.null, 
+                      color = col.intercept, alignment = c("right", 
+                        "bottom"), fontsize = fontsize - 2, ...)
+                }
+                grid.circle(x = x.intercept, y = y.intercept, 
+                  r = radius, gp = gpar(fill = "white", col = col.intercept, 
+                    ...))
+                grid.text(1, x = x.intercept, y = y.intercept, 
+                  gp = gpar(col = col.intercept, ...))
+            }
+        }
+        if (information) 
+            grid.text(paste("Error: ", round(result.matrix[rep, 
+                "error"], 6), "   Steps: ", result.matrix[rep, 
+                "steps"], sep = ""), x = 0.5, y = information.pos, 
+                just = "bottom", gp = gpar(fontsize = fontsize + 
+                  2, ...))
+        popViewport()
+        if (!is.null(file)) {
+            weight.plot <- recordPlot()
+            save(weight.plot, file = file)
+        }
+    }
+}
+calculate.delta <-
+function (x, y, r) 
+{
+    delta.x <- x[2] - x[1]
+    delta.y <- y[2] - y[1]
+    x.null <- r/sqrt(delta.x^2 + delta.y^2) * delta.x
+    if (y[1] < y[2]) 
+        y.null <- -sqrt(r^2 - x.null^2)
+    else if (y[1] > y[2]) 
+        y.null <- sqrt(r^2 - x.null^2)
+    else y.null <- 0
+    c(x.null, y.null)
+}
+draw.text <-
+function (label, x, y, xy.null = c(0, 0), color, alignment = c("left", 
+    "bottom"), ...) 
+{
+    x.label <- x[1] + xy.null[1]
+    y.label <- y[1] - xy.null[2]
+    x.delta <- x[2] - x[1]
+    y.delta <- y[2] - y[1]
+    angle = atan(y.delta/x.delta) * (180/pi)
+    if (angle < 0) 
+        angle <- angle + 0
+    else if (angle > 0) 
+        angle <- angle - 0
+    if (is.numeric(label)) 
+        label <- round(label, 5)
+    pushViewport(viewport(x = x.label, y = y.label, width = 0, 
+        height = , angle = angle, name = "vp1", just = alignment))
+    grid.text(label, x = 0, y = unit(0.75, "mm"), just = alignment, 
+        gp = gpar(col = color, ...))
+    popViewport()
+}
+```
+
+# Preface
+
+The goal of this problem set is to develop some intuition about the impact of the number of nodes in the hidden layer of the neural network.  We will use few simulated examples to have clear understanding of the structure of the data we are modeling and will assess how performance of the neural network model is impacted by the structure in the data and the setup of the network.
+
+First of all, to compensate for lack of coverage on this topic in ISLR, let's go over a couple of simple examples.  We start with simulating a simple two class dataset in 2D predictor space with an outcome representative of an interaction between attributes.  (Please notice that for the problems you will be working on this week you will be asked below to simulate a dataset using a different model.)
+
+```{r, fig.height=7,fig.width=7}
+# fix seed so that narrative always matches the plots:
+set.seed(1234567890)
+nObs <- 1000
+ctrPos <- 2
+xyTmp <- matrix(rnorm(4*nObs),ncol=2)
+xyCtrsTmp <- matrix(sample(c(-1,1)*ctrPos,nObs*4,replace=TRUE),ncol=2)
+xyTmp <- xyTmp + xyCtrsTmp
+gTmp <- paste0("class",(1+sign(apply(xyCtrsTmp,1,prod)))/2)
+plot(xyTmp,col=as.numeric(factor(gTmp)),pch=as.numeric(factor(gTmp)),xlab="X1",ylab="X2")
+abline(h=0)
+abline(v=0)
+```
+
+Symbol color and shape indicate class.  Typical problem that will present a problem for any approach estimating a single linear decision boundary.  We used similar simulated data for the random forest (week 10) problem set.
+
+## One hidden node
+
+We can fit simple neural network (using all default values in the call to `neuralnet` -- notice that both covariates and outcome have to be numeric as opposed to factor) and plot its layout (allowing for its output to be included in Rmarkdown generated report actually seems to be quite painful - one has to overwrite original implementation of `plot.nn` with the one that doesn't call `dev.new()` that is included in this Rmarkdown file with `echo=FALSE` -- to do the same you have to include that block into your Rmarkdown file also):
+
+```{r,fig.height=7,fig.width=7}
+### Doesn't run: "requires numeric/complex ... arguments"
+### nnRes <- neuralnet(g~X1+X2,data.frame(g=gTmp,xyTmp))
+nnRes <- neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp)),xyTmp))
+plot(nnRes)
+```
+
+That shows us a model with one node in a single hidden layer (default parameters).
+
+We can lookup actual model predictions and recalculate them from input variables (in the field `covariate`) and model weight and activation function (fields `weights` and `act.fct` respectively):
+
+```{r}
+head(nnRes$net.result[[1]])
+cbind(rep(1,6),nnRes$act.fct(cbind(rep(1,6),nnRes$covariate[1:6,])%*%nnRes$weights[[1]][[1]]))%*%nnRes$weights[[1]][[2]]
+```
+
+Notice that input parameter `linear.output` governs whether activation function is called on the value of the output node or not:
+
+```{r}
+nnResNLO <- neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp)),xyTmp),linear.output=FALSE)
+head(nnResNLO$net.result[[1]])
+nnResNLO$act.fct(cbind(rep(1,6),nnResNLO$act.fct(cbind(rep(1,6),nnResNLO$covariate[1:6,])%*%nnResNLO$weights[[1]][[1]]))%*%nnResNLO$weights[[1]][[2]])
+quantile(nnResNLO$net.result[[1]])
+```
+
+As the last statement (the quantiles of the predicted out) above shows, the use of activation function limiting predicted values to $[0;1]$ range when modeling outcome taking values outside of $[0;1]$ interval does not result in a very useful model. In this case with true outcome values constrained to $\{1,2\}$ so that the error is minimized by predicting every outcome to be as close to $1$ as possible.
+
+Using binary -- 0 or 1 -- outcome produces more useful model when activation function is applied to the output node (`linear.output=FALSE`) and allows use of cross-entropy error function (often used in classification setting in combination with the activation function applied to the output layer):
+
+```{r}
+nnResNLO01 <- neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp))-1,xyTmp),linear.output=FALSE)
+quantile(nnResNLO01$net.result[[1]],c(0,0.1,0.25,0.5,1))
+nnResNLO12CE <- neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp)),xyTmp),linear.output=FALSE,err.fct="ce")
+nnResNLO01CE <- neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp))-1,xyTmp),linear.output=FALSE,err.fct="ce")
+head(nnResNLO01CE$net.result[[1]])
+nnResNLO01CE$act.fct(cbind(rep(1,6),nnResNLO01CE$act.fct(cbind(rep(1,6),nnResNLO01CE$covariate[1:6,])%*%nnResNLO01CE$weights[[1]][[1]]))%*%nnResNLO01CE$weights[[1]][[2]])
+quantile(nnResNLO01CE$net.result[[1]])
+```
+
+We can plot model output indicating class identity (left panel below) that tells us that when true outcome values are constrained to 1 or 2, sum of squared errors is used as error function and output node values are used as-is (not transformed by activation function -- `linear.output=TRUE` by default), the majority of the points were estimated to be close to 1 or 1.6 and that majority of those estimated to be close to 1 correspond to the about half of the observations at the first level of the class factor (i.e. numerical value of 1).  It is also easy to see that those with predicted value of 1.6 represent roughly 1:2 mix of observations from the first and second levels of the outcome respectively, so that $1.6 \approx (1+2*2)/3 = 5/3$ approximately equals average of their numerical values corresponding to the levels of the factor representing them. 
+
+The nature of the model estimated by `neuralnet` in this (very simple!) case becomes even more intuitive if we render all points in the area encompassing our training set with model predictions and overlay training dataset on top of that (right panel below).  It is immediately apparent that this model identified a line in this 2D space separating one cloud of points belonging mostly to one class from all others so that predicted values are approximately equal to the average outcome on each side of this decision boundary.
+
+```{r,fig.height=6,fig.width=12}
+plotNNpreds2D2class <- function(inpNN,inpClassThresh,inpGrid=(-60:60)/10) {
+  tmpClrPch <- as.numeric(factor(inpNN$response))
+  plot(inpNN$net.result[[1]],col=tmpClrPch,pch=tmpClrPch)
+  table(inpNN$net.result[[1]][,1]>inpClassThresh,inpNN$response)
+  xyGridTmp <- cbind(X1=rep(inpGrid,length(inpGrid)),X2=sort(rep(inpGrid,length(inpGrid))))
+  gridValsTmp <- compute(inpNN,xyGridTmp)
+  errTmp <- sum(inpNN$err.fct(inpNN$net.result[[1]][,1],inpNN$response))
+  plot(xyGridTmp,col=as.numeric(gridValsTmp$net.result>inpClassThresh)+1,pch=20,cex=0.3,main=paste("Error:",round(errTmp,6)))
+  points(inpNN$covariate,col=tmpClrPch,pch=tmpClrPch)
+  ## Equations defining decision boundary:
+  ## 1*w0 + X1*w1 + X2*w2 = 0, i.e.:
+  ## 0 = inpNN$weights[[1]][1]+inpNN$weights[[1]][2]*X1+inpNN$weights[[1]][3]*X2, i.e:
+  ## X2 = (-inpNN$weights[[1]][1] - inpNN$weights[[1]][2]*X1) / inpNN$weights[[1]][3]
+  for ( iTmp in 1:ncol(inpNN$weights[[1]][[1]]) ) {
+    abline(-inpNN$weights[[1]][[1]][1,iTmp] / inpNN$weights[[1]][[1]][3,iTmp], -inpNN$weights[[1]][[1]][2,iTmp] /inpNN$weights[[1]][[1]][3,iTmp],lty=2,lwd=2)
+  }
+}
+old.par <- par(mfrow=c(1,2),ps=16)
+plotNNpreds2D2class(nnRes,1.3)
+par(old.par)
+```
+
+Similar, aside from a different position of decision boundary, results can be obtained when using binary representation of the outcome with cross-entropy as error function together with applying activation function to the output layer:
+
+```{r,fig.width=8,fig.height=8}
+plot(nnResNLO01CE)
+```
+
+Once activation function is applied to the output node, the output values are bound to the $[0,1]$ interval.  The predicted values that are far enough from the decision boundary are also approximately set to the average of the outcome in that subspace:
+
+```{r,fig.height=6,fig.width=12}
+old.par <- par(mfrow=c(1,2),ps=16)
+plotNNpreds2D2class(nnResNLO01CE,0.5)
+par(old.par)
+```
+
+The important points resulting from the results shown in the figures above are the following:
+
+* as simple of a model as the one that was employed here (with one node in a single hidden layer along with all other default parameters) cannot do much better than what we observed here
+* because calling (default - logistic) activation function on a given linear combination of the input variables more or less amounts to assigning almost all points on one side of hyperplane (line in 2D, plane in 3D, etc.) to zero and on the other side -- to unity
+* weights involved in transforming outcome of the hidden layer into model predictions will change those zeroes and ones to values closer to the desired outcome values, but still, use of such a simple model (with a single hidden node) employed here to prime our intuition more or less amounts to splitting covariate space into two half spaces by a hyperplane and assigning almost constant outcomes to the vast majority of the points on either side of it
+* the weights for the inputs into the single hidden node shown in the network layout plot above and stored in `weights` field of the result returned by `neuralnet` define this hyperplane (line in 2D, etc.) shown as dashes in the panels on the right above
+* this hyperplane is where sum of weighted input variables and an intercept is identical zero (and thus the result of logistic activation function is 0.5 rapidly becoming zero or one for points further away from this boundary)
+
+## Two hidden nodes, single hidden layer
+
+Now, let's add another node to the hidden layer of this network.  From the above, we know what to expect as a result of that -- another hyperplane (line in 2D) will be added to the space of covariates now dividing it into (depending on whether those hyperplans are almost parallel or not) three or four subspaces, consequently, assigning most of the points to three or four potentially different constants.  Clearly, this level of granularity could suffice for developing a model that would do quite well in our toy example.
+
+To have more than one node in the hidden layer we set `hidden` parameter to the number of nodes in it (length of vector provided as `hidden` parameter governs the number of the hidden *layers* in the network -- we still use one layer here):
+
+```{r,fig.height=7,fig.width=7}
+set.seed(1234567)
+nnRes2 <- neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp)),xyTmp),hidden=2)
+plot(nnRes2)
+```
+
+We can see that now resulting network has two nodes in a single hidden layer, which two covariates enter with weights that are approximately comparable in magnitude and opposite in sign.  Their comparably weighted sum added to a constant close to one gives the outcome value of this model. The effect of those weights in defining decision boundaries in the space of predictors is best seen from the figure below:
+
+```{r,fig.height=6,fig.width=12}
+old.par <- par(mfrow=c(1,2),ps=16)
+plotNNpreds2D2class(nnRes2,1.5)
+par(old.par)
+```
+
+This model sets up two almost parallel lines that encompass most of the observations from the first class, leaving most of the observations from the second class outside of the resulting slab.  Now let's repeat fitting neural network three times (each time starting with random choice of starting weights in the model) and compare stability of the resulting models:
+
+```{r,fig.height=6,fig.width=9}
+old.par <- par(mfcol=c(2,3),ps=16)
+for ( iTry in 1:3 ) {
+  nnRes2 <- neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp)),xyTmp),hidden=2)
+  plotNNpreds2D2class(nnRes2,1.5)
+}
+par(old.par)
+```
+
+We can see that quite frequently given the parameters used the process converges to a suboptimal solution with about half of the observations remaining in "gray" zone where their assignment to either of the classes is not immediately apparent.
+
+Aside from the multitude of local minima for neural network fitting procedure that could prevent it from finding better solutions, the main point to take from this exercise is that adding more nodes to the hidden layer (with all other default choices employed here) amounts to adding more hyperplanes bisecting the space of predictors, creating more and more subspaces where the outcome can take different values (often close to a constant in each subspace).  Obviously, the geometry of the resulting decision surfaces can become quite complicated even with modest number of nodes in the hidden layer. Lastly, these considerations provide some intuition for considering what could be a useful number of hidden nodes in the model. In thinking about that it might be useful to consider how many such hyperplanes could be sufficient to effectively separate observations belonging to different outcome categories.  Not that we necessarily would have such knowledge ahead of time, but this might prove to be a complementary way to think about the problem in addition to the often sited empirical guidelines that are based on the number of predictor variables, etc.
+
+The point of this problem set is to assess how these aspects of neural network fitting play out in another simulated dataset.
+
+Lastly, we also would like you to consider what combination of error function and output node transformation you would like to use for this week problem set.  Below are three calls of `neuralnet` timed using different combinations of `err.fct` and `linear.output`:
+
+```{r}
+system.time(invisible(neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp))-1,xyTmp),hidden=2,linear.output = TRUE,err.fct="sse")))
+system.time(invisible(neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp))-1,xyTmp),hidden=2,linear.output = FALSE,err.fct="sse")))
+system.time(invisible(neuralnet(g~X1+X2,data.frame(g=as.numeric(factor(gTmp))-1,xyTmp),hidden=2,linear.output = FALSE,err.fct="ce")))
+```
+
+Obviously, for our toy example use of untransformed outcome from the output node and sum of squares as error function results in the fastest convergence.  But then the decision as to how to translate its predictions to class categories is yours.  On the other hand, one might argue that more principled approach since we are dealing with classification problem would be to use logistic transform of the outcome to contain it within $[0;1]$ interval and cross-entropy as an error function.  Except that it seems to run nearly two orders of magnitude slower in this case and does not necessarily converge with default values for the rest of the arguments.  Please feel free to experiment with how they will perform for the problems you are presented with below and decide for yourself which combination of these parameters is more suitable for the task at hand.
+
+# Problem 1 (10 points): 3D data with spherical class boundary
+
+Simulate data with n=1000 observations and p=3 covariates -- all random variables from standard normal distribution.  Create two category class variable assigning all observations within a sphere with radius of 1.5 centered at 3D zero to one class category and all others -- to the second.  Please note that this dataset is entirely different from the one used in the preface -- you will need to write code simulating it on your own -- similar dataset in 2D was used as a motivational example at week 11 (SVM) lecture before introducing kernels and SVMs.  Since you will be reusing this code in the following two problems it is probably best to turn this procedure into a function with appropriate parameters.  Check that resulting class assignment splits these observations very roughly evenly between these two groups.  Plot values of the resulting covariates projected at each pair of the axes indicating classes to which observations belong with symbol color and/or shape (you can use function `pairs`, for example).  What is the smallest number of planes in 3D space that would completely enclose points from the "inner" class?
+
+```{r, eval=TRUE}
+set.seed(3)
+
+n = 1000
+p = 3
+
+x1 = rnorm(n)
+x2 = rnorm(n)
+x3 = rnorm(n)
+
+cl1 = numeric(n)
+cl1[x1^2+x2^2+x3^2 <= 1.5] = 1 
+
+tempDf1 = data.frame(x1=x1, x2=x2, x3=x3, class=cl1)
+pairs(tempDf1[, 1:3], col=as.numeric(tempDf1$class+1))
+
+# function to generate dataset similar to the one above; defualt 1000 observations, and radius of class 1 is 1.5
+genData = function(nObs = 1000, covariates, nullVars=0, radius=1.5, ...){
+  tempDf = NULL
+  for(i in 1:(covariates+nullVars)){
+    x = rnorm(nObs)
+    var.name = paste("x", i, sep="")
+    x.df = data.frame(x)
+    colnames(x.df) = var.name
+    tempDf = c(tempDf, x.df)
+  }
+  
+  # convert the list of covariate dataframes into a single dataframe
+  tempDf = as.data.frame(tempDf)
+  
+  # cls is the class result vector
+  cls = numeric(nObs)
+  cls.vals = numeric(1000)
+  for(i in 1:covariates){
+    cls.vals = cls.vals + tempDf[,i]^2
+  }
+  cls[cls.vals < radius^2] = 1
+  tempDf = cbind(tempDf, data.frame(class=cls))
+  return(tempDf) # return the dataframe with the covariates and class results
+}
+
+# test the function
+# tempDf2 = genData(nObs=1000, covariates=3, radius=1.5)
+
+tempDf2 = genData(1000, 3, 2, 1.5)
+
+```
+
+Above, we see the pair plots for each of the three covariates (x1, x2, x3) with the other variables. The resulting class separation shows class 1 (in red) as the inner points of the 3D sphere where the radius is less than or equal to 1.5. All points outside the radius of 1.5 falls into class 2 (in black). All of these covariates are built from random normal distributions centered at 0.
+
+Geometrically and borrowing from math classes, the smallest number of planes that can enclose the inner class 1 (in red) sphere are 4 planes that are built in the shape of a pyramid. The issue with a pyramidal-shaped model is that it will not fit the spherical shape well and result in adjustable error. If the pyramid is larger than the class 1 (red) sphere it will include class 2 (black) points. Conversely, if the pyramidal shape is smaller than the class 1 (red) sphere it will exclude class 1 (red) points. Either way, the predictions will have misscalssifications and we can adjust this model to minimize the error.
+
+# Problem 2 (20 points): neural network classifier
+
+For the dataset simulated above fit neural networks with 1 through 6 nodes in a single hidden layer (use `neuralnet` implementation).  For each of them calculate training error (see an example in Preface where it was calculated using `err.fct` field in the result returned by `neuralnet`).  Simulate another independent dataset (with n=10,000 observations to make resulting test error estimates less variable) using the same procedure as above (3D, two classes, decision boundary as a sphere of 1.5 radius) and use it to calculate test error at each number of hidden nodes.  Plot training and test errors as function of the number of nodes in the hidden layer.  What does resulting plot tells you about the interplay between model error, model complexity and problem geometry?  What is the geometrical interpretation of this error behavior?
+
+```{r, eval=TRUE}
+set.seed(3)
+
+nodes = 6
+train.error = numeric()
+test.error = numeric()
+
+# 10k obs dataset
+df.nn.10k = genData(nObs=10000, covariates=3, radius=1.5)
+
+for(node in 1:nodes){
+  nn = neuralnet(class~x1+x2+x3, data=tempDf1, hidden=node, linear.output=FALSE, err.fct="sse", threshold=0.1)
+  train.err = sum(nn$err.fct(nn$net.result[[1]][,1], nn$response))
+  train.error = c(train.error, train.err)
+  
+  test.result = compute(nn, df.nn.10k[, 1:3])
+  nn.df = data.frame(actual=df.nn.10k$class, prediction=test.result$net.result)
+  test.err = sum((nn.df[,1]-nn.df[,2])^2) # actual - predicted (squared and summed) = SSE
+  test.error = c(test.error, test.err)
+  
+}
+
+plot(train.error, xlab="# of nodes", main="Training SSE")
+plot(test.error, xlab="# of nodes", main="Test SSE")
+
+
+```
+
+We see more or less and agreement between each graph above. The training error decreases its SSE as the number of nodes increases. The greatest drop in SSE (approx. 100-40 SSE) happens between 1-4 nodes, but there is negligible difference in SSE between 4, 5, and 6 nodes. We see a similar story with test error of the 10,000 obs. set where the greatest drop in SSE (approx. 2500-1100 SSE) happens from 1-4 nodes, and no significant change between 4, 5, and 6 nodes.
+
+These plots support the theme of models of bias-variance tradoff. As mentioned above, as we increase the number of nodes for a single-layer neural network, we can think of it as increasing the number of lines or hyperplanes used to classify our observations. Since we generated the data and know how the dataset should be classified, we know before hand that the 3D classification boundary between class 1 and class 2 should resemble a sphere (of radius 1.5). Trying to create a sphere with many hyperplanes is fairly difficult, but as you add more hyperplanes you can create complex polygons that resemble a sphere (decrease training SSE as we add more and more nodes). We see this case as more nodes are added, our training and test errors decrease because more nodes lead to more hyperplanes that can divide the classes into a "sphere"-like shape. 
+
+So we see that increaseing model complexity via adding more nodes helps make the model more complex by allowing it more hyperplanes to further subdivide and classify the data. Geometrically, this amounts to creating more complex decision boundaries that can better fit around the classes of data. In terms of bias-variance, we are increasing the variance (fitting and possibly overfitting) of the decision boundaries as model complexity increases. Of course, there is a trade-off, and we see that in our data. Too complex of a model and we get overfitting to the training data and poor performance for separate test data (It's not guaranteed that the test set resembles the training in classification or geometry). We see that our test SSE is still much higher (1100 SSE vs. 40 SSE at 4 nodes) than the training.
+
+But there are ways around overfitting the model, such as finding optimal complexity in the middle. In this case 4 nodes has comparable performance on test SSE to 5 or 6 nodes. We actually predicted in problem 1 that the least amount of hyperplanes needed to surround class 1 is 4, which creates a pyramidal shape geometrically. According to our model and error, a pyramidal shape is all we need to get a decent classification boundary for our datasets.
+
+# Problem 3 (30 points): evaluate impacts of sample size and noise
+
+Setup a simulation repeating procedure described above for n=100, 200 and 500 observations in the *training* set as well adding none, 1, 2 and 5 null variables to the training and test data (and to the covariates in formula provided to `neuralnet`).  Draw values for null variables from standard normal distribution as well and do not use them in the assignment of the observations to the class category (e.g. `x<-matrix(rnorm(600),ncol=6); cl<-as.numeric(factor(sqrt(rowSums(x[,1:3]^2))<1.5))` creates dataset with three informative and three null variables). Repeat calculation of training and test errors at least several times for each combination of sample size, number of null variables and size of the hidden layer simulating new training and test dataset every time to assess variability in those estimates.  Present resulting error rates so that the effects of sample size and fraction of null variables can be discerned and discuss their impact of the resulting model fits.  
+
+```{r, eval=TRUE}
+# function to create equation for neuralnet()
+# this function requires that the outcome is in the last column
+createEquation = function(nVars){
+  #n.cols = dim(df)[2]
+  col.names = paste("x", 1:nVars, sep="") # cange n.cols-1 to nVars
+  col.names = c(col.names, "class") # class = outcome
+  left.half = paste(col.names[length(col.names)], "~", sep="")
+  
+  right.half = paste0(col.names[1:nVars], collapse="+")
+  f = paste0(left.half, right.half, sep="")
+  formula = as.formula(f)
+  return(formula)
+}
+```
+
+```{r, eval=TRUE}
+set.seed(3)
+
+nIters = 20 # 20 iterations for each observation and nullvariable test
+nObs = c(100, 200, 500)
+nullVars = c(0,1,2,5)
+p = 3 # number of relavant variables
+nodes = 6
+
+# dataframe to store the results
+df.nn = NULL
+
+# test data 10k
+test.x = genData(10000, 3, 5, 1.5)
+
+for(i in 1:nIters){
+  for(obs in nObs){
+    for(nulls in nullVars){
+      #x.sub = x[1:nObs, c(1:(p+nulls), 9)] # subset the entire dataframe to match the obs and nullVars
+      
+      x = matrix(rnorm(obs*(p+nulls)), ncol=(p+nulls)) # create the data and then subset it according to Obs and Nulls
+      cl = as.numeric(sqrt(rowSums(x[,1:3]^2)) < 1.5) # class 1 is in radius 1.5 and class 0 is outside radius 1.5
+      x = as.data.frame(x)
+      colnames(x) = paste("x", 1:dim(x)[2], sep="")
+      x = cbind(x, data.frame(class=cl))
+      
+      for(node in 1:nodes){
+        formula = createEquation((p+nulls))
+        nn = neuralnet(formula, data=x, hidden=node, linear.output=FALSE, err.fct="sse", threshold=0.5)
+        
+        train.err = sum(nn$err.fct(nn$net.result[[1]][,1], nn$response))
+        
+        test.x = genData(10000, 3, nulls, 1.5)
+        r = dim(test.x)[2] # remove the last vector (class)
+        
+        test.result = compute(nn, test.x[,-r])
+        nn.df = data.frame(actual=test.x$class, prediction=test.result$net.result)
+        test.err = sum((nn.df[,1]-nn.df[,2])^2)
+        
+        df.nn = rbind(df.nn, data.frame(Iter=i, NObs=obs, NNulls=nulls, NNodes=node, TrainErr=train.err, TestErr=test.err))
+        
+      }
+    }
+  }
+}
+
+```
+
+```{r, eval=TRUE}
+# plot test and train errors
+
+# training and test error based on number of observations
+old.par = par(mfrow=c(1,2))
+ggplot(df.nn, aes(x=factor(NObs), y=TrainErr, colour=NObs)) + geom_boxplot()
+ggplot(df.nn, aes(x=factor(NObs), y=TestErr, colour=NObs)) + geom_boxplot()
+par(old.par)
+
+# training and test error based on number of null variables
+old.par = par(mfrow=c(1,2))
+ggplot(df.nn, aes(x=factor(NNulls), y=TrainErr, colour=NNulls)) + geom_boxplot()
+ggplot(df.nn, aes(x=factor(NNulls), y=TestErr, colour=NNulls)) + geom_boxplot()
+par(old.par)
+
+```
+
+Above we have the results of running neuralnet() on datasets of size 100, 200, and 500 with combinations of 0, 1, 2, and 5 null variables for 30 iterations each. The boxplot graphs show comaprison across varying dataset sizes and number of null variables respectivey, and they report the training error and the test error, using a 10,000 observation test dataset. The errors are reported as sum of squares (SSE). Lastly, the threshold for neuralnet() was set to 0.5 since smaller thresholds would not converge.
+
+Interestingly, we see differing cases between training and test errors across different sizes of the dataset. The median training error actually increases as the number of observations increases from 100 to 200 to 500. But the median test error decreases from 100 to 200 to 500 observations. It was discussed before that with small sized datasets, the neural net model is prone to overfitting, and it may be the case that with only 100 obsevations and even 200 observations we have some overfitting of the network to the data. We also see that in terms of scale, the median training errors for 100, 200, and 500 are not very different being approximately 10 SSE, 15 SSE, and 30 SSE respectively. In these cases, neural net fits the training set well.
+
+Where we see the effects of overfitting is in the median test SSE in graph 2. The model with 100 observations had the highest median test error followed by 200 observations and 500 observations with the lowest median test error, approximately 1500 SSE. It may just be that the overfitting of 100 and 200 observations penalized the models when testing on a new dataset, and the more flexible 500 observations network model had a better chance fitting the test data. Thus, we see evidence that increasing the number of observations when training a neural network helps to reduce variance in the decision boundary and overfitting to training data, allowing for a flexible model to perform better a predicting test data.
+
+For the different number of null variables, we see that the median training error is about the same for 0, 1, 2, and 5 null variable models, and this makes sense since all of the models were trained using only the 3 covariates (x1, x2, x3). Looking at graph 4, we see that as the number of null variables increases from 0 to 1 to 2 to 5, the median testing error increases (SSE). Adding 5 null variables to the model gave the highest test error at approximately 2500 SSE. Here we see the case that as we add more unimportant variables that produce more noise in our data, the neural network peformance suffers when making predictions. And this is evidence that an important step to improving a neural network model performance is to select for variables helpful for predicting outcome and removing unimportant "null" variables from the data model.
+
+
+# Extra 10 points problem: model banknote authentication data
+
+Use `neuralnet` to model the outcome in banknote authentication dataset that we used in previous weeks and compare its test error at several sizes of hidden layer to that observed for SVM and KNN approaches.
+
+```{r}
+set.seed(3)
+
+# load e1071 for tune() and class for knn()
+library(e1071)
+library(class)
+library(MASS)
+
+# load data
+dbaDat <- read.table("data_banknote_authentication.txt",sep=",")
+colnames(dbaDat) <- c("var","skew","curt","entr","auth")
+dbaDat$auth <- as.numeric(dbaDat$auth)
+
+# temp dataframe for results
+df.all = NULL
+
+# test and training sets
+train = sample(dim(dbaDat)[1], size=dim(dbaDat)[1]/2)
+train.data = dbaDat[train, ]
+test.data = dbaDat[-train, ]
+
+# neuralnet
+nIters = 10
+nodes = 6
+#train.error = numeric()
+#test.error = numeric()
+
+for(iter in 1:nIters){
+  for(node in 1:nodes){
+    
+    method = paste("Nodes", node) # methods will say neuralnet and # of nodes at the end
+    
+    nn = neuralnet(auth~var+skew+curt+entr, data=train.data, hidden=node, linear.output=FALSE, err.fct="sse", threshold=0.5)
+    #train.err = sum(nn$err.fct(nn$net.result[[1]][,1], nn$response))
+    #train.error = c(train.error, train.err)
+  
+    test.result = compute(nn, test.data[, -5])
+    nn.df = data.frame(actual=test.data$auth, prediction=test.result$net.result)
+    test.err = sum((nn.df[,1]-nn.df[,2])^2) # actual - predicted (squared and summed) = SSE
+    testMSE = test.err/(dim(dbaDat)[1]-2) # degrees of freedom 1372-2=1370
+    
+    #test.error = c(test.error, test.err)
+  
+    df.all = rbind(df.all, data.frame(Iter=iter, Method=method, TestErr=testMSE))
+  }
+}
+
+# svm
+nTries = 10 
+for(i in 1:nTries){
+  
+  svm.radial.out = tune(svm, auth~., data=train.data, kernel="radial", 
+                        ranges=list(cost=c(1,2), gamma=c(0.01,0.02)))
+  svm.radial.best.fit = svm.radial.out$best.model
+  
+  ypredict = predict(svm.radial.best.fit, newdata=test.data)
+  tab = table(predict=ypredict, truth=dbaDat$auth[-train])
+  testMSE = 1-((tab[1,1] + tab[2,2])/sum(tab))
+  
+  df.all = rbind(df.all, data.frame(Iter=i, Method="SVM Radial", TestErr=testMSE))
+}
+
+# knn
+train.data$auth = as.factor(train.data$auth)
+test.data$auth = as.factor(test.data$auth)
+
+nTries = 40 # 40 iterations because ther are a lot of 0 testMSE
+for(i in 1:nTries){
+  
+  knn.out = tune.knn(x=train.data[,-5], y=train.data[,5], k=c(1,2,5,11))
+  knn.best.fit = knn.out$best.model
+  
+  # prediction
+  ypred = knn(train=train.data, test=test.data, cl=train.data[,5], k=knn.best.fit$k)
+  tab = table(ypred, test.data[, 5])
+  
+  testMSE = 1-(tab[1,1] + tab[2,2])/sum(tab)
+
+  df.all = rbind(df.all, data.frame(Iter=i, Method="KNN", TestErr=testMSE))  
+}
+
+```
+
+```{r, eval=TRUE}
+# plot for testMSE of NeuralNet, SVM and KNN
+ggplot(df.all, aes(x=factor(Method), y=TestErr, colour=Method)) + geom_boxplot()
+
+```
+
+```{r}
+# average testMSE
+nod.1 = df.all$TestErr[df.all[,"Method"] == "Nodes 1"]
+sum(nod.1)/length(nod.1)
+
+nod.2 = df.all$TestErr[df.all[,"Method"] == "Nodes 2"]
+sum(nod.2)/length(nod.2)
+
+nod.3 = df.all$TestErr[df.all[,"Method"] == "Nodes 3"]
+sum(nod.3)/length(nod.3)
+
+nod.4 = df.all$TestErr[df.all[,"Method"] == "Nodes 4"]
+sum(nod.4)/length(nod.4)
+
+nod.5 = df.all$TestErr[df.all[,"Method"] == "Nodes 5"]
+sum(nod.5)/length(nod.5)
+
+nod.6 = df.all$TestErr[df.all[,"Method"] == "Nodes 6"]
+sum(nod.6)/length(nod.6)
+
+svm.e = df.all$TestErr[df.all[,"Method"] == "SVM Radial"]
+sum(svm.e)/length(svm.e)
+
+knn.e = df.all$TestErr[df.all[,"Method"] == "KNN"]
+sum(knn.e)/length(knn.e)
+
+```
+
+
+Above we see a boxplot graph of a single-layer Neural Net with 1-6 hidden nodes, Radial SVM, and KNN. Each shows test errror over many iterations in terms of mean squared error. These models were trained by the same training dataset and validated with the same test dataset. We also calculate the average Test MSE for each method.
+
+We see from the graph and calculations that Radial SVM has the highest testMSE at approvimately 1. The lowest testMSE is at 0, but this may be misleading due to the selected values of K at 1, 2, 5, 11. We see that the lowest testMSE for NeuralNet are at 4, 5, and 6 hidden nodes at 0.0008 MSE. These values are low, close to 0, and comparable in performance to KNN. Thus, we see that NeuralNet has a competative performance to SVM and KNN. While it is very unlikely to achieve a 0 testMSE for NeuralNet, we can apply optimizations like early stopping, variable selection, or others to further reduce the testMSE and improve prediction accuracy.
+
+# Session info {-}
+
+For reproducibility purposes it is always a good idea to capture the state of the environment that was used to generate the results:
+
+```{r}
+sessionInfo()
+```
+
+The time it took to knit this file from beginning to end is about (seconds):
+
+```{r}
+proc.time() - ptStart
+```
